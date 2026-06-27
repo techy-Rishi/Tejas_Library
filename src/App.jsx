@@ -1144,8 +1144,11 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
     addAudit(currentUser,`Staff ${sf?.active?"deactivated":"activated"}: ${sf?.name}`);
   };
   const doDeleteStaff = id => {
-    const sf=staff.find(x=>x.id===id); setStaff(prev=>prev.filter(x=>x.id!==id));
-    addAudit(currentUser,`Staff deleted: ${sf?.name}`); setDeleteStaffGuard(null);
+    if (id === currentUser.id) { setDeleteStaffGuard(null); return; }
+    const sf = staff.find(x => x.id === id);
+    setStaff(prev => prev.filter(x => x.id !== id));
+    addAudit(currentUser, `Staff deleted: ${sf?.name}`);
+    setDeleteStaffGuard(null);
   };
 
   const exportData = () => {
