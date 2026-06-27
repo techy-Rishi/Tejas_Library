@@ -40,7 +40,7 @@ const C = {
   indigoLight:  "#EEF2FF",
   text:         "#0F172A",
   sub:          "#475569",
-  faint:         "#94A3B8",
+  faint:        "#94A3B8",
   white:        "#FFFFFF",
 };
 
@@ -165,92 +165,84 @@ const ROLE_PERMS = {
   readonly:  ["dashboard","members"],
 };
 
-const StatusBadge = ({status}) => {
-  const sm=STATUS_META[status]||STATUS_META.inactive;
-  return <Badge text={sm.label} color={sm.color} bg={sm.bg} icon={sm.icon}/>;
-};
-
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: POPUP WINDOW MODAL DIALOG
+// PRIMITIVE ATOMIC COMPONENT BLOCKS
 // ─────────────────────────────────────────────────────────────────────────────
-const Modal = ({title,onClose,children,wide=false}) => (
-  <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.52)",zIndex:1000,display:"flex",alignItems:"flex-end",justifyContent:"center",backdropFilter:"blur(2px)"}}
-    onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-    <div style={{background:C.surface,borderRadius:`${RADIUS.xl}px ${RADIUS.xl}px 0 0`,width:"100%",maxWidth:wide?680:520,maxHeight:"92vh",overflowY:"auto",boxShadow:SH_LG}}>
-      <div style={{display:"flex",justifyContent:"center",padding:"14px 0 0"}}>
-        <div style={{width:36,height:4,borderRadius:2,background:C.border}}/>
-      </div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 20px 14px",borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,background:C.surface,zIndex:1}}>
-        <h2 style={{margin:0,fontSize:16,fontWeight:800,color:C.text,letterSpacing:"-0.2px"}}>{title}</h2>
-        <button onClick={onClose} style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:"50%",width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:C.sub,transition:TR}}><Icon name="x" size={15} color={C.sub}/></button>
-      </div>
-      <div style={{padding:"18px 20px 20px"}}>{children}</div>
-    </div>
-  </div>
+const Badge = ({text,color=C.teal,bg=C.tealMid,size=11,px=10,icon}) => (
+  <span style={{...sBadge(color,bg,size,px),display:"inline-flex",alignItems:"center",gap:4}}>
+    {icon?<Icon name={icon} size={size+1} color={color}/>:null}{text}
+  </span>
 );
 
-const DestructiveConfirm = ({message,onConfirm,onCancel,confirmLabel="Confirm",variant="danger"}) => (
-  <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.58)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,backdropFilter:"blur(3px)"}}>
-    <div style={{background:C.surface,borderRadius:RADIUS.xl,padding:28,maxWidth:320,width:"100%",boxShadow:SH_LG,textAlign:"center"}}>
-      <div style={{width:52,height:52,background:C.redLight,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Icon name="warn" size={26} color={C.red}/></div>
-      <div style={{fontSize:16,fontWeight:800,color:C.text,textTransform:"capitalize",marginBottom:8}}>Confirm Operations Request</div>
-      <div style={{fontSize:13,color:C.sub,marginBottom:24,lineHeight:1.6}}>{message}</div>
-      <div style={{display:"flex",gap:10}}><Btn onClick={onCancel} variant="ghost" full>Cancel</Btn><Btn onClick={onConfirm} variant={variant} full>{confirmLabel}</Btn></div>
-    </div>
-  </div>
-);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// THERMAL RECEIPT SYSTEM
-// ─────────────────────────────────────────────────────────────────────────────
-const Receipt = ({member,renewal,libName,onClose}) => {
-  const rNo=useRef("R"+Math.floor(10000+Math.random()*90000));
-
-  const printReceipt=useCallback(()=>{
-    const html=`<!DOCTYPE html><html><head><title>Receipt ${rNo.current}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Courier New',monospace;max-width:280px;margin:20px auto;font-size:12px;color:#000}
-.c{text-align:center}.d{border-top:1px dashed #aaa;margin:9px 0}.row{display:flex;justify-content:space-between;margin:3px 0}
-h2{font-size:14px}small{font-size:10px;color:#555}</style></head>
-<body>
-<div class="c"><h2>📚 ${libName}</h2><small>Fee Payment Receipt · ${rNo.current}</small></div>
-<div class="d"></div>
-<div class="row"><small>Date</small><b>${fmtDate(renewal.paidOn)}</b></div>
-<div class="row"><small>Time</small><b>${renewal.paidTime}</b></div>
-<div class="d"></div>
-<div class="row"><small>Member</small><span>${member.name}</span></div>
-<div class="row"><small>ID</small><span>${member.id}</span></div>
-<div class="row"><small>Phone</small><span>${member.phone}</span></div>
-<div class="row"><small>Seat</small><span>${member.seatNo?"Seat "+member.seatNo:"—"}</span></div>
-<div class="row"><small>Plan</small><span>${renewal.planName}</span></div>
-<div class="row"><small>Valid</small><span>${fmtDate(renewal.from)} → ${fmtDate(renewal.to)}</span></div>
-<div class="d"></div>
-<div class="row" style="font-size:15px;font-weight:900"><span>Paid</span><span>Rs. ${renewal.amount}</span></div>
-<script>window.onload=function(){window.print();window.onafterprint=function(){window.close();};};<\/script>
-</body></html>`;
-    const win=window.open("","_blank","width=380,height=600");
-    if(!win){alert("Popup blocked! Enable popups to print receipts.");return;}
-    win.document.write(html);
-    win.document.close();
-  },[member,renewal,libName]);
-
+const Btn = ({children,onClick,variant="primary",size="md",disabled=false,full=false,iconName}) => {
+  const [hov,setHov]=useState(false);
+  const [press,setPress]=useState(false);
+  const vs={
+    primary: {bg:hov?(press?"#0A6B65":C.tealDark):C.teal,  color:C.white, border:"none"},
+    danger:  {bg:hov?(press?"#991B1B":"#B91C1C"):C.red,     color:C.white, border:"none"},
+    ghost:   {bg:hov?C.surfaceAlt:"transparent",            color:C.sub,   border:`1px solid ${C.border}`},
+    green:   {bg:hov?(press?"#166534":C.green):"#16A34A",   color:C.white, border:"none"},
+    purple:  {bg:hov?"#7E22CE":C.purple,                    color:C.white, border:"none"},
+    indigo:  {bg:hov?"#4338CA":C.indigo,                    color:C.white, border:"none"},
+  };
+  const sz={sm:{padding:"6px 13px",fontSize:12,gap:5},md:{padding:"10px 18px",fontSize:14,gap:7}};
+  const v=vs[variant]||vs.primary;
   return (
-    <Modal title="Payment Receipt" onClose={onClose}>
-      <div style={{background:C.surfaceAlt,borderRadius:RADIUS.md,padding:16,marginBottom:16,fontFamily:"monospace",fontSize:12,border:`1px solid ${C.border}`}}>
-        <div style={{textAlign:"center",marginBottom:8}}><div style={{fontWeight:900,fontSize:14}}>📚 {libName}</div></div>
-        <div style={{borderTop:"1px dashed #ccc",margin:"8px 0"}}/>
-        {[["Date",fmtDate(renewal.paidOn)],["Member",member.name],["Plan",renewal.planName]].map(([k,v])=>(
-          <div key={k} style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{color:C.faint}}>{k}</span><span style={{fontWeight:600}}>{v}</span></div>
-        ))}
-        <div style={{borderTop:"1px dashed #ccc",margin:"8px 0"}}/>
-        <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,fontSize:15}}><span>Amount</span><span>₹{renewal.amount}</span></div>
-      </div>
-      <div style={{display:"flex",gap:10}}><Btn onClick={printReceipt} iconName="print" full>Print</Btn><Btn onClick={onClose} variant="ghost">Close</Btn></div>
-    </Modal>
+    <button onClick={onClick} disabled={disabled}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>{setHov(false);setPress(false);}}
+      onMouseDown={()=>setPress(true)} onMouseUp={()=>setPress(false)}
+      style={{background:v.bg,color:v.color,border:v.border,...sz[size],borderRadius:RADIUS.md,
+        fontWeight:700,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.5:1,
+        width:full?"100%":"auto",fontFamily:FONT,transition:TR,
+        boxShadow:disabled?"none":hov?SH_MD:SH_SM,
+        transform:press?"scale(0.97)":"scale(1)",
+        display:"inline-flex",alignItems:"center",justifyContent:"center",gap:sz[size].gap}}>
+      {iconName?<Icon name={iconName} size={size === "sm"?13:15} color={v.color}/>:null}
+      {children}
+    </button>
   );
 };
 
+const Field = ({label,value,onChange,type="text",placeholder,hint,required,options,disabled=false}) => {
+  const [foc,setFoc]=useState(false);
+  const base={width:"100%",padding:"10px 12px",borderRadius:RADIUS.md,
+    border:`1.5px solid ${foc?C.teal:C.border}`,fontSize:14,
+    color:disabled?C.faint:C.text, background:disabled?C.surfaceAlt:C.white,
+    outline:"none",boxSizing:"border-box",fontFamily:FONT,
+    boxShadow:foc?FOCUS:"none",transition:TR};
+  return (
+    <div style={{marginBottom:16}}>
+      {label?<label style={{display:"block",fontSize:11,fontWeight:700,color:C.sub,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.07em"}}>{label}{required && <span style={{color:C.red}}> *</span>}</label>:null}
+      {options
+        ?<select value={value} onChange={e=>onChange(e.target.value)} disabled={disabled} onFocus={()=>setFoc(true)} onBlur={()=>setFoc(false)} style={base}>
+            {options.map(o=><option key={o.value??o} value={o.value??o} disabled={o.disabled}>{o.label??o}</option>)}
+          </select>
+        :<input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled} onFocus={()=>setFoc(true)} onBlur={()=>setFoc(false)} style={base}/>
+      }
+      {hint?<p style={{margin:"4px 0 0",fontSize:11,color:C.faint,lineHeight:1.4}}>{hint}</p>:null}
+    </div>
+  );
+};
+
+const Divider = ({label}) => <div style={sDivider()}>{label}</div>;
+const Card = ({children,style={},onClick}) => <div onClick={onClick} style={sCard(style)}>{children}</div>;
+const StatBox = ({icon,label,value,sub,color=C.teal}) => (
+  <div style={sStatBox(color)}>
+    <Icon name={icon} size={20} color={color} style={{marginBottom:8}}/>
+    <div style={{fontSize:21,fontWeight:900,color,fontFamily:"monospace",letterSpacing:"-0.5px"}}>{value}</div>
+    <div style={{fontSize:12,fontWeight:700,color:C.text,marginTop:3,lineHeight:1.3}}>{label}</div>
+    {sub?<div style={{fontSize:11,color:C.sub,marginTop:2}}>{sub}</div>:null}
+  </div>
+);
+const Alert = ({children,color,bg,iconName,style={}}) => (
+  <div style={{background:bg,border:`1px solid ${color}25`,borderLeft:`3px solid ${color}`,borderRadius:RADIUS.md,padding:"11px 14px",display:"flex",gap:10,alignItems:"flex-start",boxShadow:SH_XS,...style}}>
+    {iconName?<Icon name={iconName} size={15} color={color} style={{marginTop:1,flexShrink:0}}/>:null}
+    <div style={{flex:1,fontSize:13,color:C.sub,lineHeight:1.5}}>{children}</div>
+  </div>
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: MEMBER DETAILS MATRIX LOGS TIMELINE
+// COMPONENT: MEMBER LIFETIME EXPIRY TIMELINE
 // ─────────────────────────────────────────────────────────────────────────────
 const MemberTimeline = ({member,plans,onRenew,onReceipt}) => {
   const renewals  = member.renewals||[];
@@ -300,7 +292,7 @@ const MemberTimeline = ({member,plans,onRenew,onReceipt}) => {
         {events.map((e,idx)=>(
           <div key={idx} style={{position:"relative",marginBottom:14}}>
             <div style={{position:"absolute",left:-21,top:4,width:12,height:12,borderRadius:"50%",background:C.teal,border:`2px solid ${C.white}`}}/>
-            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:RADIUS.md,padding:"11px 13px",boxShadow:SH_XS}}>
+            <div style={{background:C.surface,border:`1px solid ${C.border}',borderRadius:RADIUS.md,padding:"11px 13px",boxShadow:SH_XS`}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
                   <div style={{fontSize:13,fontWeight:800}}>{e.planName} Session</div>
@@ -346,7 +338,7 @@ const RenewModal = ({member,plans,onRenew,onClose}) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCREEN: CORE SYSTEM GENERAL OVERVIEW DASHBOARD
+// SCREEN: CORE MANAGEMENT OVERVIEW DASHBOARD
 // ─────────────────────────────────────────────────────────────────────────────
 const Dashboard = ({members,settings}) => {
   const counts={active:0,expiring:0,expired:0,inactive:0};
@@ -357,7 +349,7 @@ const Dashboard = ({members,settings}) => {
   return (
     <div>
       <div style={{marginBottom:20}}>
-        <div style={{fontSize:22,fontWeight:900,color:C.text,letterSpacing:"-0.4px"}}>{settings.libraryName}</div>
+        <div style={{fontSize:22,fontWeight:900,color:C.text}}>{settings.libraryName}</div>
         <div style={{fontSize:13,color:C.sub,marginTop:3}}>{settings.address} · {settings.timing}</div>
       </div>
       <div style={{display:"flex",gap:10,marginBottom:14}}>
@@ -377,7 +369,7 @@ const Dashboard = ({members,settings}) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCREEN: SEATING GRID ALLOCATION LAYER MAP
+// SCREEN: SEATING MAP CONTROL FLOORPLAN GRID
 // ─────────────────────────────────────────────────────────────────────────────
 const SeatsScreen = ({members,setMembers,settings,addAudit,currentUser,saveToDatabase}) => {
   const [sel,setSel]=useState(null);
@@ -432,7 +424,7 @@ const SeatsScreen = ({members,setMembers,settings,addAudit,currentUser,saveToDat
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCREEN: MEMBER STUDENTS REGISTER LOG FILES
+// SCREEN: STUDENT MEMBERS DIRECTORY CONTROL
 // ─────────────────────────────────────────────────────────────────────────────
 const MembersScreen = ({members,setMembers,plans,settings,addAudit,currentUser,saveToDatabase}) => {
   const [search,setSearch]=useState("");
@@ -498,7 +490,7 @@ const MembersScreen = ({members,setMembers,plans,settings,addAudit,currentUser,s
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCREEN: CASH LEDGER MANAGEMENT & REVENUES REPORT DOWNLOADS
+// SCREEN: ACCOUNT BALANCING LEDGERS & MANAGEMENT MONTHLY REPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 const FeesScreen = ({members,setMembers,plans,settings,saveToDatabase}) => {
   const [filter, setFilter] = useState("all");
