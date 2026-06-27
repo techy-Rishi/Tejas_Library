@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SUPABASE CLIENT INITIALIZATION (Via Environment Variables)
+// SUPABASE CLIENT INITIALIZATION (Environment Variables Strategy)
 // ─────────────────────────────────────────────────────────────────────────────
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
@@ -134,7 +134,7 @@ const STATUS_META = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// INITIAL BACKUP SEED RECORDS (Relative to 2026 Context)
+// INITIAL STATIC FALLBACK SEED DATA (2026 Context)
 // ─────────────────────────────────────────────────────────────────────────────
 const D = (offset) => addDays(todayStr(), offset);
 
@@ -165,107 +165,60 @@ const ROLE_PERMS = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PRIMITIVE ATOMIC BLOCKS
+// SAFE POPUP PRINT SYSTEM
 // ─────────────────────────────────────────────────────────────────────────────
-const Badge = ({text,color=C.teal,bg=C.tealMid,size=11,px=10,icon}) => (
-  <span style={{...sBadge(color,bg,size,px),display:"inline-flex",alignItems:"center",gap:4}}>
-    {icon?<Icon name={icon} size={size+1} color={color}/>:null}{text}
-  </span>
-);
+const Receipt = ({member,renewal,libName,onClose}) => {
+  const rNo=useRef("R"+Math.floor(10000+Math.random()*90000));
 
-const Btn = ({children,onClick,variant="primary",size="md",disabled=false,full=false,iconName}) => {
-  const [hov,setHov]=useState(false);
-  const [press,setPress]=useState(false);
-  const vs={
-    primary: {bg:hov?(press?"#0A6B65":C.tealDark):C.teal,  color:C.white, border:"none"},
-    danger:  {bg:hov?(press?"#991B1B":"#B91C1C"):C.red,     color:C.white, border:"none"},
-    ghost:   {bg:hov?C.surfaceAlt:"transparent",            color:C.sub,   border:`1px solid ${C.border}`},
-    green:   {bg:hov?(press?"#166534":C.green):"#16A34A",   color:C.white, border:"none"},
-    purple:  {bg:hov?"#7E22CE":C.purple,                    color:C.white, border:"none"},
-    indigo:  {bg:hov?"#4338CA":C.indigo,                    color:C.white, border:"none"},
-  };
-  const sz={sm:{padding:"6px 13px",fontSize:12,gap:5},md:{padding:"10px 18px",fontSize:14,gap:7}};
-  const v=vs[variant]||vs.primary;
+  const printReceipt=useCallback(()=>{
+    const html=`<!DOCTYPE html><html><head><title>Receipt ${rNo.current}</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Courier New',monospace;max-width:280px;margin:20px auto;font-size:12px;color:#000}
+.c{text-align:center}.d{border-top:1px dashed #aaa;margin:9px 0}.row{display:flex;justify-content:space-between;margin:3px 0}
+h2{font-size:14px}small{font-size:10px;color:#555}</style></head>
+<body>
+<div class="c"><h2>📚 ${libName}</h2><small>Fee Payment Receipt · ${rNo.current}</small></div>
+<div class="d"></div>
+<div class="row"><small>Date</small><b>${fmtDate(renewal.paidOn)}</b></div>
+<div class="row"><small>Time</small><b>${renewal.paidTime}</b></div>
+<div class="d"></div>
+<div class="row"><small>Member</small><span>${member.name}</span></div>
+<div class="row"><small>ID</small><span>${member.id}</span></div>
+<div class="row"><small>Phone</small><span>${member.phone}</span></div>
+<div class="row"><small>Seat</small><span>${member.seatNo?"Seat "+member.seatNo:"—"}</span></div>
+<div class="row"><small>Plan</small><span>${renewal.planName}</span></div>
+<div class="row"><small>Valid</small><span>${fmtDate(renewal.from)} → ${fmtDate(renewal.to)}</span></div>
+${renewal.note?`<div class="row"><small>Note</small><span style='font-size:10px'>${renewal.note}</span></div>`:""}
+<div class="d"></div>
+<div class="row" style="font-size:15px;font-weight:900"><span>Paid Amount</span><span>Rs. ${renewal.amount}</span></div>
+<div class="d"></div>
+<div class="c" style="font-size:10px;color:#777">Thank You 🙏</div>
+<script>window.onload=function(){window.print();window.onafterprint=function(){window.close();};};<\/script>
+</body></html>`;
+    const win=window.open("","_blank","width=380,height=600");
+    if(!win){alert("Popup blocked! Enable popups to print receipts.");return;}
+    win.document.write(html);
+    win.document.close();
+  },[member,renewal,libName]);
+
   return (
-    <button onClick={onClick} disabled={disabled}
-      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>{setHov(false);setPress(false);}}
-      onMouseDown={()=>setPress(true)} onMouseUp={()=>setPress(false)}
-      style={{background:v.bg,color:v.color,border:v.border,...sz[size],borderRadius:RADIUS.md,
-        fontWeight:700,cursor:disabled?"not-allowed":"pointer",opacity:disabled?0.5:1,
-        width:full?"100%":"auto",fontFamily:FONT,transition:TR,
-        boxShadow:disabled?"none":hov?SH_MD:SH_SM,
-        transform:press?"scale(0.97)":"scale(1)",
-        display:"inline-flex",alignItems:"center",justifyContent:"center",gap:sz[size].gap}}>
-      {iconName?<Icon name={iconName} size={size === "sm"?13:15} color={v.color}/>:null}
-      {children}
-    </button>
-  );
-};
-
-const Field = ({label,value,onChange,type="text",placeholder,hint,required,options,disabled=false}) => {
-  const [foc,setFoc]=useState(false);
-  const base={width:"100%",padding:"10px 12px",borderRadius:RADIUS.md,
-    border:`1.5px solid ${foc?C.teal:C.border}`,fontSize:14,
-    color:disabled?C.faint:C.text, background:disabled?C.surfaceAlt:C.white,
-    outline:"none",boxSizing:"border-box",fontFamily:FONT,
-    boxShadow:foc?FOCUS:"none",transition:TR};
-  return (
-    <div style={{marginBottom:16}}>
-      {label?<label style={{display:"block",fontSize:11,fontWeight:700,color:C.sub,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.07em"}}>{label}{required && <span style={{color:C.red}}> *</span>}</label>:null}
-      {options
-        ?<select value={value} onChange={e=>onChange(e.target.value)} disabled={disabled} onFocus={()=>setFoc(true)} onBlur={()=>setFoc(false)} style={base}>
-            {options.map(o=><option key={o.value??o} value={o.value??o} disabled={o.disabled}>{o.label??o}</option>)}
-          </select>
-        :<input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled} onFocus={()=>setFoc(true)} onBlur={()=>setFoc(false)} style={base}/>
-      }
-      {hint?<p style={{margin:"4px 0 0",fontSize:11,color:C.faint,lineHeight:1.4}}>{hint}</p>:null}
-    </div>
-  );
-};
-
-const Divider = ({label}) => <div style={sDivider()}>{label}</div>;
-const Card = ({children,style={},onClick}) => <div onClick={onClick} style={sCard(style)}>{children}</div>;
-const StatBox = ({icon,label,value,sub,color=C.teal}) => (
-  <div style={sStatBox(color)}>
-    <Icon name={icon} size={20} color={color} style={{marginBottom:8}}/>
-    <div style={{fontSize:21,fontWeight:900,color,fontFamily:"monospace",letterSpacing:"-0.5px"}}>{value}</div>
-    <div style={{fontSize:12,fontWeight:700,color:C.text,marginTop:3,lineHeight:1.3}}>{label}</div>
-    {sub?<div style={{fontSize:11,color:C.sub,marginTop:2}}>{sub}</div>:null}
-  </div>
-);
-const Alert = ({children,color,bg,iconName,style={}}) => (
-  <div style={{background:bg,border:`1px solid ${color}25`,borderLeft:`3px solid ${color}`,borderRadius:RADIUS.md,padding:"11px 14px",display:"flex",gap:10,alignItems:"flex-start",boxShadow:SH_XS,...style}}>
-    {iconName?<Icon name={iconName} size={15} color={color} style={{marginTop:1,flexShrink:0}}/>:null}
-    <div style={{flex:1,fontSize:13,color:C.sub,lineHeight:1.5}}>{children}</div>
-  </div>
-);
-
-const Modal = ({title,onClose,children,wide=false}) => (
-  <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.52)",zIndex:1000,display:"flex",alignItems:"flex-end",justifyContent:"center",backdropFilter:"blur(2px)"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-    <div style={{background:C.surface,borderRadius:`${RADIUS.xl}px ${RADIUS.xl}px 0 0`,width:"100%",maxWidth:wide?680:520,maxHeight:"92vh",overflowY:"auto",boxShadow:SH_LG}}>
-      <div style={{display:"flex",justifyContent:"center",padding:"14px 0 0"}}><div style={{width:36,height:4,borderRadius:2,background:C.border}}/></div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 20px 14px",borderBottom:`1px solid ${C.border}`,position:"sticky",top:0,background:C.surface,zIndex:1}}>
-        <h2 style={{margin:0,fontSize:16,fontWeight:800,color:C.text,letterSpacing:"-0.2px"}}>{title}</h2>
-        <button onClick={onClose} style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:"50%",width:30,height:30,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:C.sub,transition:TR}}><Icon name="x" size={15} color={C.sub}/></button>
+    <Modal title="Payment Receipt" onClose={onClose}>
+      <div style={{background:C.surfaceAlt,borderRadius:RADIUS.md,padding:16,marginBottom:16,fontFamily:"monospace",fontSize:12,border:`1px solid ${C.border}`}}>
+        <div style={{textAlign:"center",marginBottom:8}}><div style={{fontWeight:900,fontSize:14}}>📚 {libName}</div><div style={{color:C.faint,fontSize:10}}>{rNo.current}</div></div>
+        <div style={{borderTop:"1px dashed #ccc",margin:"8px 0"}}/>
+        {[["Date",fmtDate(renewal.paidOn)],["Time",renewal.paidTime],["Member",member.name],["ID",member.id],["Plan",renewal.planName],["Valid",`${fmtDateSh(renewal.from)} → ${fmtDateSh(renewal.to)}`]].map(([k,v])=>(
+          <div key={k} style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{color:C.faint}}>{k}</span><span style={{fontWeight:600}}>{v}</span></div>
+        ))}
+        {renewal.note ? <div style={{background:C.amberLight,borderRadius:5,padding:"4px 8px",marginTop:6,fontSize:10,color:C.amber}}>📝 {renewal.note}</div> : null}
+        <div style={{borderTop:"1px dashed #ccc",margin:"8px 0"}}/>
+        <div style={{display:"flex",justifyContent:"space-between",fontWeight:900,fontSize:15}}><span>Amount Paid</span><span>₹{renewal.amount}</span></div>
       </div>
-      <div style={{padding:"18px 20px 20px"}}>{children}</div>
-    </div>
-  </div>
-);
-
-const DestructiveConfirm = ({message,onConfirm,onCancel,confirmLabel="Confirm",variant="danger"}) => (
-  <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,0.58)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,backdropFilter:"blur(3px)"}}>
-    <div style={{background:C.surface,borderRadius:RADIUS.xl,padding:28,maxWidth:320,width:"100%",boxShadow:SH_LG,textAlign:"center"}}>
-      <div style={{width:52,height:52,background:C.redLight,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><Icon name="warn" size={26} color={C.red}/></div>
-      <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:8}}>Confirm Action</div>
-      <div style={{fontSize:13,color:C.sub,marginBottom:24,lineHeight:1.6}}>{message}</div>
-      <div style={{display:"flex",gap:10}}><Btn onClick={onCancel} variant="ghost" full>Cancel</Btn><Btn onClick={onConfirm} variant={variant} full>{confirmLabel}</Btn></div>
-    </div>
-  </div>
-);
+      <div style={{display:"flex",gap:10}}><Btn onClick={printReceipt} iconName="print" full>Print Receipt</Btn><Btn onClick={onClose} variant="ghost">Close</Btn></div>
+    </Modal>
+  );
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COMPONENT: MEMBER TIMELINE
+// COMPONENT: PREMIUM TIMELINE VIEW
 // ─────────────────────────────────────────────────────────────────────────────
 const MemberTimeline = ({member,plans,onRenew,onReceipt}) => {
   const renewals  = member.renewals||[];
@@ -273,6 +226,7 @@ const MemberTimeline = ({member,plans,onRenew,onReceipt}) => {
   const sm        = STATUS_META[status];
   const totalPaid = renewals.reduce((s,r)=>s+r.amount,0);
   const plan      = plans.find(p=>p.id===member.planId);
+  const last      = renewals[renewals.length-1];
   const remaining = daysLeft(member.expiry);
   const remPct    = clamp(Math.round((Math.max(0,remaining)/(plan?.days||30))*100),0,100);
   const barColor  = remPct>50?C.green:remPct>20?C.amber:C.red;
@@ -280,95 +234,148 @@ const MemberTimeline = ({member,plans,onRenew,onReceipt}) => {
   const events=[];
   for(let i=0;i<renewals.length;i++){
     const r=renewals[i];
-    if(i>0){const gap=Math.round((new Date(r.from)-new Date(renewals[i-1].to))/86400000);if(gap>1)events.push({type:"gap",from:renewals[i-1].to,to:r.from,days:gap});}
+    if(i!===0){const gap=Math.round((new Date(r.from)-new Date(renewals[i-1].to))/86400000);if(gap>1)events.push({type:"gap",from:renewals[i-1].to,to:r.from,days:gap});}
     events.push({type:"renewal",...r,index:i+1});
   }
 
   return (
     <div>
-      <div style={{background:`linear-gradient(135deg,${C.teal}12 0%,${C.tealLight} 100%)`,border:`1px solid ${C.teal}22`,borderRadius:RADIUS.lg,padding:18,marginBottom:18}}>
-        <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:14}}>
-          <div style={{...sAvatar(60),border:`3px solid ${C.white}`,boxShadow:SH_MD}}>{member.name?.[0]}</div>
+      <div style={{background:`linear-gradient(135deg,${C.teal}12,${C.tealLight})`,border:`1px solid ${C.teal}22`,borderRadius:RADIUS.lg,padding:18,marginBottom:18}}>
+        <div style={{display:"flex",alignItems:"flex-start",gap:14,marginBottom:14}}>
+          <div style={{...sAvatar(56),border:`3px solid ${C.white}`,boxShadow:SH_MD}}>{member.name?.[0]}</div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:19,fontWeight:900,color:C.text,letterSpacing:"-0.3px",lineHeight:1.2}}>{member.name}</div>
-            <div style={{display:"flex",alignItems:"center",gap:5,fontSize:13,color:C.sub,marginTop:3}}><Icon name="phone" size={12} color={C.faint}/>{member.phone}</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:9}}><Badge text={member.id} color={C.sub} bg={C.surface} size={10}/><StatusBadge status={status}/></div>
+            <div style={{fontSize:18,fontWeight:900,color:C.text,letterSpacing:"-0.3px"}}>{member.name}</div>
+            <div style={{display:"flex",alignItems:"center",gap:5,fontSize:13,color:C.sub,marginTop:2}}><Icon name="phone" size={12} color={C.faint}/>{member.phone}</div>
+            {member.address && <div style={{fontSize:12,color:C.faint,marginTop:2}}>📍 {member.address}</div>}
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}><Badge text={member.id} color={C.sub} bg={C.white} size={10}/><StatusBadge status={status}/></div>
           </div>
         </div>
 
-        <div style={{background:"rgba(255,255,255,0.85)",backdropFilter:"blur(8px)",border:`1px solid ${C.border}`,borderRadius:RADIUS.md,padding:"12px 14px",boxShadow:SH_XS}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div><div style={{fontSize:10,fontWeight:800,color:C.sub,textTransform:"uppercase"}}>Membership Plan</div><div style={{fontSize:14,fontWeight:700,color:C.text,marginTop:2}}>{plan?.name||"—"} Plan</div></div>
-            <div style={{textAlign:"right"}}><div style={{fontSize:19,fontWeight:900,color:sm.color,fontFamily:"monospace"}}>{remaining<0?`${Math.abs(remaining)}d overdue`:`${remaining}d left`}</div></div>
+        {member.seatNo ? (
+          <div style={{background:C.white,border:`1.5px solid ${C.teal}35`,borderRadius:RADIUS.md,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:12,boxShadow:SH_XS}}>
+            <div style={{width:36,height:36,background:C.tealGrad,borderRadius:RADIUS.sm,display:"flex",alignItems:"center",justifyContent:"center"}}><Icon name="seat" size={18} color={C.white}/></div>
+            <div><div style={{fontSize:10,fontWeight:800,color:C.teal,textTransform:"uppercase"}}>Allocated Grid</div><div style={{fontSize:15,fontWeight:900,color:C.text}}>Seat #{member.seatNo}</div></div>
           </div>
-          <div style={{background:C.surfaceAlt,borderRadius:RADIUS.full,height:7,overflow:"hidden"}}><div style={{width:`${remPct}%`,height:"100%",background:barColor,borderRadius:RADIUS.full,transition:"width 0.5s ease"}}/></div>
+        ) : (
+          <div style={{background:"rgba(255,255,255,0.6)",border:`1px dashed ${C.borderDark}`,borderRadius:RADIUS.md,padding:"10px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}><Icon name="seat" size={16} color={C.faint}/><span style={{fontSize:13,color:C.faint}}>No seat allocated</span></div>
+        )}
+
+        <div style={{background:C.white,borderRadius:RADIUS.md,padding:"12px 14px",boxShadow:SH_XS}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div><div style={{fontSize:10,fontWeight:800,color:C.sub,textTransform:"uppercase"}}>{plan?.name||"—"} Plan Bundle</div></div>
+            <div style={{fontSize:16,fontWeight:900,color:sm.color,fontFamily:"monospace"}}>{remaining<0?`${Math.abs(remaining)}d overdue`:`${remaining}d left`}</div>
+          </div>
+          <div style={{background:C.surfaceAlt,borderRadius:RADIUS.full,height:7,overflow:"hidden"}}><div style={{width:`${remPct}%`,height:"100%",background:barColor,borderRadius:RADIUS.full,transition:"width 0.4s ease"}}/></div>
         </div>
       </div>
 
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:18}}>
-        <div style={{background:C.blue+"0E",borderRadius:RADIUS.md,padding:"11px 10px",textAlign:"center",border:`1px solid ${C.blue}18`}}><Icon name="calendar" size={14} color={C.blue} style={{margin:"0 auto 4px"}}/><div style={{fontSize:14,fontWeight:900,color:C.blue,fontFamily:"monospace"}}>{fmtDateSh(member.firstJoined)}</div><div style={{fontSize:10,color:C.sub,marginTop:2}}>First Joined</div></div>
-        <div style={{background:C.green+"0E",borderRadius:RADIUS.md,padding:"11px 10px",textAlign:"center",border:`1px solid ${C.green}18`}}><Icon name="fee" size={14} color={C.green} style={{margin:"0 auto 4px"}}/><div style={{fontSize:14,fontWeight:900,color:C.green,fontFamily:"monospace"}}>₹{totalPaid}</div><div style={{fontSize:10,color:C.sub,marginTop:2}}>Total Paid</div></div>
-      </div>
-
-      {(status==="expired"||status==="expiring") && <div style={{marginBottom:18}}><Btn onClick={onRenew} variant="purple" iconName="refresh" full>Renew Workspace Asset</Btn></div>}
-
-      <Divider label={`Activity Ledger — ${renewals.length} cycles`}/>
-      <div style={{position:"relative",paddingLeft:26}}>
-        <div style={{position:"absolute",left:9,top:0,bottom:0,width:2,background:`linear-gradient(to bottom,${C.teal}40,${C.border})`}}/>
-        {events.map((e,idx)=>(
-          <div key={idx} style={{position:"relative",marginBottom:14}}>
-            <div style={{position:"absolute",left:-21,top:4,width:12,height:12,borderRadius:"50%",background:C.teal,border:`2px solid ${C.white}`}}/>
-            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:RADIUS.md,padding:"11px 13px",boxShadow:SH_XS}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <div>
-                  <div style={{fontSize:13,fontWeight:800}}>{e.planName} Session</div>
-                  <div style={{fontSize:11,color:C.faint}}>{fmtDateSh(e.from)} → {fmtDateSh(e.to)}</div>
-                </div>
-                <div style={{textAlign:"right"}}><div style={{fontSize:14,fontWeight:900,color:C.green,fontFamily:"monospace"}}>₹{e.amount}</div><button onClick={()=>onReceipt(e)} style={{background:"none",border:"none",color:C.teal,fontWeight:700,fontSize:11,cursor:"pointer"}}>Print</button></div>
-              </div>
-            </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:18}}>
+        {[{label:"First Join",val:fmtDateSh(member.firstJoined),color:C.blue,icon:"calendar"},{label:"Sessions",val:`${renewals.length}×`,color:C.purple,icon:"timeline"},{label:"Total Paid",val:`₹${totalPaid}`,color:C.green,icon:"fee"}].map(s=>(
+          <div key={s.label} style={{background:s.color+"0E",borderRadius:RADIUS.md,padding:"10px 8px",textAlign:"center",border:`1px solid ${s.color}15`}}>
+            <Icon name={s.icon} size={14} color={s.color} style={{margin:"0 auto 4px"}}/><div style={{fontSize:13,fontWeight:900,color:s.color,fontFamily:"monospace"}}>{s.val}</div><div style={{fontSize:10,color:C.sub,marginTop:2}}>{s.label}</div>
           </div>
         ))}
+      </div>
+
+      {(status==="expired"||status==="expiring"||status==="inactive") && <div style={{marginBottom:18}}><Btn onClick={onRenew} variant="purple" iconName="refresh" full>Renew Workspace Cycle</Btn></div>}
+
+      <Divider label={`Cycle History Log — ${renewals.length} entries`}/>
+      <div style={{position:"relative",paddingLeft:24}}>
+        <div style={{position:"absolute",left:9,top:0,bottom:0,width:2,background:C.border}}/>
+        {events.map((e,i)=>{
+          if(e.type==="gap") return (
+            <div key={"g"+i} style={{position:"relative",marginBottom:14}}><div style={{background:C.surfaceAlt,border:`1px dashed ${C.borderDark}`,borderRadius:RADIUS.sm,padding:"8px 12px",fontSize:12,color:C.faint}}>⏸ Gap Period — {e.days} days inactive</div></div>
+          );
+          return (
+            <div key={"r"+i} style={{position:"relative",marginBottom:14}}>
+              <div style={{position:"absolute",left:-20,top:4,width:10,height:12,borderRadius:"50%",background:C.teal}}/>
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:RADIUS.md,padding:"12px",boxShadow:SH_XS}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div><div style={{fontSize:13,fontWeight:800}}>{e.planName} Stream</div><div style={{fontSize:11,color:C.sub,marginTop:2}}>{fmtDateSh(e.from)} → {fmtDateSh(e.to)}</div></div>
+                  <div style={{textAlign:"right"}}><div style={{fontSize:14,fontWeight:900,color:C.green,fontFamily:"monospace"}}>₹{e.amount}</div><button onClick={()=>onReceipt(e)} style={{background:"none",border:"none",color:C.teal,fontSize:11,fontWeight:700,cursor:"pointer",marginTop:4}}>Receipt 🖨</button></div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPONENT: RENEW MODAL WITH SYSTEM DISCOUNT AUDITS
+// ─────────────────────────────────────────────────────────────────────────────
 const RenewModal = ({member,plans,onRenew,onClose}) => {
-  const [planId, setPlanId] = useState(member.planId || plans[0]?.id);
-  const selPlan = plans.find(p => p.id === planId);
-  const baseAmt = selPlan?.price || 0;
-  const startDate = todayStr();
-  const endDate = selPlan ? addDays(startDate, selPlan.days) : startDate;
+  const isActive=new Date(member.expiry)>new Date();
+  const [dateMode,setDateMode]=useState(isActive?"from_expiry":"today");
+  const [customDate,setCustomDate]=useState(todayStr());
+  const [planId,setPlanId]=useState(member.planId||plans[0]?.id);
+  const [paid,setPaid]=useState(true);
+  const [useDiscount,setUseDiscount]=useState(false);
+  const [discAmt,setDiscAmt]=useState("");
+  const [discNote,setDiscNote]=useState("");
 
-  const handleConfirm = () => {
-    const renewal = { planId: selPlan.id, planName: selPlan.name, amount: baseAmt, from: startDate, to: endDate, paidOn: todayStr(), paidTime: timeNow(), note: null };
-    onRenew(member.id, selPlan, renewal, true, endDate);
+  const selPlan=plans.find(p=>p.id===planId);
+  const baseAmt=selPlan?.price||0;
+  const finalAmt=useDiscount&&discAmt?Math.max(0,baseAmt-Number(discAmt)):baseAmt;
+  const startDate=dateMode==="from_expiry"?member.expiry:dateMode==="custom"?customDate:todayStr();
+  const endDate=selPlan?addDays(startDate,selPlan.days):startDate;
+  const canSubmit=selPlan&&(!useDiscount||(discAmt&&discNote.trim().length>3));
+
+  const handleConfirm=()=> {
+    if(!canSubmit)return;
+    const note=useDiscount&&discAmt?`Custom discount ₹${discAmt} — ${discNote}`:null;
+    const renewal={planId:selPlan.id,planName:selPlan.name,amount:finalAmt,from:startDate,to:endDate,paidOn:todayStr(),paidTime:timeNow(),note};
+    onRenew(member.id,selPlan,renewal,paid,endDate);
     onClose();
   };
 
   return (
     <Modal title={`Renew — ${member.name}`} onClose={onClose}>
-      <Divider label="Select Active Bundle Package"/>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
-        {plans.map(p => (
-          <div key={p.id} onClick={() => setPlanId(p.id)} style={{ border: `2px solid ${planId === p.id ? C.purple : C.border}`, borderRadius: RADIUS.md, padding: "10px 12px", cursor: "pointer", background: planId === p.id ? C.purpleLight : C.white, transition: TR }}>
-            <div style={{ fontWeight: 900, fontSize: 16, color: C.purple, fontFamily: "monospace" }}>₹{p.price}</div>
-            <div style={{ fontWeight: 700, fontSize: 13, marginTop: 2 }}>{p.name}</div>
-            <div style={{ fontSize: 11, color: C.sub }}>{p.days} days</div>
+      <Divider label="Step 1 — Timeline Start Window"/>
+      <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+        {[[ "today", "Start Today" ],[ "from_expiry", "Continue from Expiry", isActive ],[ "custom", "Custom Target Date" ]].filter(d=>d[2]!==false).map(d=>(
+          <div key={d[0]} onClick={()=>setDateMode(d[0])} style={{border:`2px solid ${dateMode===d[0]?C.teal:C.border}`,borderRadius:RADIUS.md,padding:"11px 14px",cursor:"pointer",background:dateMode===d[0]?C.tealLight:C.white,fontWeight:700,fontSize:13,color:dateMode===d[0]?C.teal:C.text}}>{d[1]}</div>
+        ))}
+        {dateMode==="custom" && <Field type="date" value={customDate} onChange={setCustomDate}/>}
+      </div>
+
+      <Divider label="Step 2 — Plan Selection Matrix"/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:14}}>
+        {plans.map(p=>(
+          <div key={p.id} onClick={()=>setPlanId(p.id)} style={{border:`2px solid ${planId===p.id?C.purple:C.border}`,borderRadius:RADIUS.md,padding:"10px 12px",cursor:"pointer",background:planId===p.id?C.purpleLight:C.white}}>
+            <div style={{fontWeight:900,fontSize:16,color:C.purple,fontFamily:"monospace"}}>₹{p.price}</div>
+            <div style={{fontWeight:700,fontSize:13,marginTop:2}}>{p.name}</div>
+            <div style={{fontSize:11,color:C.sub}}>{p.days} days</div>
           </div>
         ))}
       </div>
-      <div style={{ background: C.surfaceAlt, padding: 12, borderRadius: RADIUS.md, marginBottom: 16, fontSize: 13, color: C.sub }}>
-        Validity Stream: <b>{fmtDate(startDate)}</b> to <b>{fmtDate(endDate)}</b>
-      </div>
-      <Btn onClick={handleConfirm} variant="purple" iconName="refresh" full>Confirm Renewal Execution</Btn>
+
+      <Divider label="Step 3 — Ledger Parameters & Fees"/>
+      <label style={{display:"flex",alignItems:"center",gap:10,background:useDiscount?C.orangeLight:C.surfaceAlt,borderRadius:RADIUS.md,padding:"11px 14px",marginBottom:10,cursor:"pointer",border:`1px solid ${useDiscount?C.orange:C.border}`}}>
+        <input type="checkbox" checked={useDiscount} onChange={e=>setUseDiscount(e.target.checked)} style={{width:16,height:16,accentColor:C.orange}}/>
+        <div><div style={{fontWeight:700,color:useDiscount?C.orange:C.text,fontSize:13}}>Apply Discretionary Audit Discount</div></div>
+      </label>
+      {useDiscount && (
+        <div style={{background:C.orangeLight,border:`1px solid ${C.orange}30`,borderRadius:RADIUS.md,padding:"12px 14px",marginBottom:12}}>
+          <Field label="Discount Amount (₹)" value={discAmt} onChange={setDiscAmt} type="number"/>
+          <Field label="Reason / Audit Note *" value={discNote} onChange={setDiscNote} placeholder="Referred by management / Exam candidate"/>
+        </div>
+      )}
+
+      <label style={{display:"flex",alignItems:"center",gap:10,background:paid?C.greenLight:C.surfaceAlt,borderRadius:RADIUS.md,padding:"12px 14px",marginBottom:16,cursor:"pointer",border:`1px solid ${paid?C.green:C.border}`}}>
+        <input type="checkbox" checked={paid} onChange={e=>setPaid(e.target.checked)} style={{width:17,height:17,accentColor:C.green}}/>
+        <div><div style={{fontWeight:700,color:paid?C.green:C.text,fontSize:14}}>Collect Cash Payment Asset Token</div></div>
+      </label>
+
+      <Btn onClick={handleConfirm} disabled={!canSubmit} variant="purple" iconName="refresh" full>Execute Sync Renewal — ₹{finalAmt}</Btn>
     </Modal>
   );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCREEN: SYSTEM DASHBOARD ARCHITECTURE
+// SCREEN: MAIN CORE DASHBOARD
 // ─────────────────────────────────────────────────────────────────────────────
 const Dashboard = ({members,settings}) => {
   const counts={active:0,expiring:0,expired:0,inactive:0};
@@ -384,9 +391,9 @@ const Dashboard = ({members,settings}) => {
       </div>
       <div style={{display:"flex",gap:10,marginBottom:14}}>
         <StatBox icon="seat" label="Seats Occupied" value={`${occupied}/${settings.totalSeats}`} sub={`${settings.totalSeats-occupied} available`} color={C.teal}/>
-        <StatBox icon="fee" label="Ledger Capital" value={`₹${collected.toLocaleString()}`} sub="All lifetime cycles" color={C.green}/>
+        <StatBox icon="fee" label="Ledger Capital" value={`₹${collected.toLocaleString()}`} sub="All lifetime balances" color={C.green}/>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
         {Object.entries(STATUS_META).map(([k,sm])=>(
           <div key={k} style={{background:sm.bg,borderLeft:`3px solid ${sm.color}`,borderRadius:RADIUS.md,padding:14,boxShadow:SH_XS}}>
             <Icon name={sm.icon} size={18} color={sm.color} style={{marginBottom:6}}/>
@@ -395,199 +402,445 @@ const Dashboard = ({members,settings}) => {
           </div>
         ))}
       </div>
+      {counts.expiring > 0 && (
+        <Card style={{padding:16,marginBottom:12,borderLeft:`3px solid ${C.amber}`}}>
+          <div style={{fontWeight:800,color:C.amber,marginBottom:10,display:"flex",alignItems:"center",gap:6,fontSize:14}}><Icon name="warn" size={15} color={C.amber}/>Expiring Soon Logs</div>
+          {members.filter(m=>getMemberStatus(m)==="expiring").map(m=>(
+            <div key={m.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+              <div><div style={{fontWeight:700,color:C.text,fontSize:14}}>{m.name}</div><div style={{fontSize:12,color:C.sub}}>Space ID: {m.seatNo||"—"} · {m.id}</div></div>
+              <Badge text={`${daysLeft(m.expiry)}d left`} color={C.amber} bg={C.amberLight}/>
+            </div>
+          ))}
+        </Card>
+      )}
     </div>
   );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCREEN: DIGITAL FLOOR SEAT MATRIX
+// SCREEN: DYNAMIC SEAT ALLOCATION MAP
 // ─────────────────────────────────────────────────────────────────────────────
 const SeatsScreen = ({members,setMembers,settings,addAudit,currentUser,saveToDatabase}) => {
   const [sel,setSel]=useState(null);
   const [mt,setMt]=useState(null);
+  const [search,setSearch]=useState("");
   const [pickedId,setPickedId]=useState("");
+  const [vacGuard,setVacGuard]=useState(null);
+
   const seatMap={};
   members.forEach(m=>{if(m.seatNo!=null) seatMap[parseInt(m.seatNo,10)]=m;});
+  const unassigned=members.filter(m=>m.seatNo==null);
+  const filtered=unassigned.filter(m=>m.name.toLowerCase().includes(search.toLowerCase())||m.id.toLowerCase().includes(search.toLowerCase()));
 
-  const assignSeat=async()=>{
+  const assignSeat=async()=> {
     if(!pickedId||!sel)return;
+    const m=members.find(x=>x.id===pickedId);
     const updated = members.map(x=>x.id===pickedId?{...x,seatNo:sel}:x);
     setMembers(updated);
-    addAudit(currentUser,`Seat Space #${sel} mapped to operational client`);
+    addAudit(currentUser,`Seat Space #${sel} mapped to core occupant ${m?.name}`);
     await saveToDatabase(updated, "members");
     setMt(null);setSel(null);setPickedId("");
   };
 
+  const doVacate=async(seatNo)=> {
+    const updated = members.map(x=>parseInt(x.seatNo,10)===seatNo?{...x,seatNo:null}:x);
+    setMembers(updated);
+    addAudit(currentUser,`Vacated seat layout index #${seatNo}`);
+    await saveToDatabase(updated, "members");
+    setVacGuard(null);setMt(null);setSel(null);
+  };
+
   return (
     <div>
-      <div style={{marginBottom:16}}>
-        <div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.3px"}}>Grid Operations Map</div>
-      </div>
+      <div style={{marginBottom:14}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.3px"}}>Spatial Inventory Interface Map</div></div>
       <Card style={{padding:16,marginBottom:14}}>
-        <div style={{textAlign:"center",marginBottom:14}}><span style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:RADIUS.sm,padding:"5px 24px",fontSize:11,fontWeight:700,color:C.sub,letterSpacing:"0.06em"}}>MAIN ACCESS GATEWAY</span></div>
+        <div style={{textAlign:"center",marginBottom:14}}><span style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:RADIUS.sm,padding:"5px 24px",fontSize:11,fontWeight:700,color:C.sub,letterSpacing:"0.06em"}}>ACCESS TERMINAL</span></div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:8}}>
           {Array.from({length:settings.totalSeats},(_,i)=>{
-            const num=i+1; const m=seatMap[num]; const isOccupied=!!m;
+            const num=i+1; const m=seatMap[num]; const isOccupied=!!m; const expired=m&&getMemberStatus(m)==="expired";
             return (
-              <div key={num} onClick={()=>{setSel(num); setMt(isOccupied?"occupied":"assign");}} style={{aspectRatio:"1",borderRadius:8,background:isOccupied?C.tealGrad:C.surfaceAlt,border:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:isOccupied?C.white:C.text,fontWeight:700,fontSize:12,transition:TR,transform:sel===num?"scale(1.12)":"scale(1)"}}>
+              <div key={num} onClick={()=>{setSel(num); setSearch(""); setPickedId(""); setMt(isOccupied?"occupied":"assign");}} style={{aspectRatio:"1",borderRadius:8,background:isOccupied?(expired?C.redLight:C.tealGrad):C.surfaceAlt,border:`2px solid ${sel===num?C.blue:isOccupied?(expired?C.red:C.teal):C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:isOccupied?(expired?C.red:C.white):C.text,fontWeight:700,fontSize:11,transition:TR,transform:sel===num?"scale(1.15)":"scale(1)"}}>
                 {num}
               </div>
             );
           })}
         </div>
       </Card>
-      {mt==="assign" && (
-        <Modal title={`Allocate Seat Unit Space #${sel}`} onClose={()=>setMt(null)}>
-          <Field label="Target Client Registration ID" value={pickedId} onChange={setPickedId} placeholder="e.g. LIB101"/>
-          <Btn onClick={assignSeat} iconName="check" full>Commit Layout Link</Btn>
-        </Modal>
-      )}
-      {mt==="occupied" && (
-        <Modal title={`Occupant Trace Unit System #${sel}`} onClose={()=>setMt(null)}>
-          <Alert color={C.teal} bg={C.tealLight} iconName="info">Asset holds active token link for: <b>{seatMap[sel]?.name}</b></Alert>
-          <div style={{marginTop:16}}>
-            <Btn onClick={async()=>{
-              const updated = members.map(x=>x.seatNo===sel?{...x,seatNo:null}:x);
-              setMembers(updated);
-              addAudit(currentUser,`Vacated seat space location #${sel}`);
-              await saveToDatabase(updated, "members");
-              setMt(null);
-            }} variant="danger" iconName="x" full>Purge Location Allocation</Btn>
+
+      <Card>
+        <div style={{padding:"14px 16px",borderBottom:`1px solid ${C.border}`,fontWeight:700,fontSize:14}} Lynne>Active Core Allocations ({Object.keys(seatMap).length})</div>
+        {Object.entries(seatMap).sort(([a],[b])=>Number(a)-Number(b)).map(([num,m])=>(
+          <div key={num} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:`1px solid ${C.border}`}}>
+            <div style={{width:32,height:32,borderRadius:RADIUS.sm,background:C.tealGrad,color:C.white,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800}}>{num}</div>
+            <div style={{flex:1}}><div style={{fontWeight:700,fontSize:14}}>{m.name}</div><div style={{fontSize:11,color:C.sub}}>{m.id}</div></div>
+            <StatusBadge status={getMemberStatus(m)}/>
+            <Btn onClick={()=>setVacGuard(parseInt(num,10))} variant="ghost" size="sm">Vacate</Btn>
           </div>
+        ))}
+      </Card>
+
+      {mt==="assign" && (
+        <Modal title={`Allocate Empty Spatial Node #${sel}`} onClose={()=>setMt(null)}>
+          <div style={{position:"relative",marginBottom:12}}>
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search client dataset profile name..." style={{width:"100%",padding:"10px 12px",borderRadius:RADIUS.md,border:`1px solid ${C.border}`,outline:"none"}}/>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:220,overflowY:"auto",marginBottom:14}}>
+            {filtered.map(m=>(
+              <div key={m.id} onClick={()=>setPickedId(pickedId===m.id?"":m.id)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:10,background:pickedId===m.id?C.tealLight:C.surfaceAlt,borderRadius:RADIUS.sm,cursor:"pointer",border:`1px solid ${pickedId===m.id?C.teal:C.border}`}}>
+                <div><b>{m.name}</b> ({m.id})</div>
+                {pickedId===m.id && <Icon name="check" size={16} color={C.teal}/>}
+              </div>
+            ))}
+          </div>
+          <Btn onClick={assignSeat} disabled={!pickedId} iconName="check" full>Confirm Grid Allocation Location</Btn>
         </Modal>
       )}
+
+      {vacGuard && <DestructiveConfirm message={`Are you absolute sure you want to clear structural tracking mapping partition node space unit #${vacGuard}?`} onConfirm={()=>doVacate(vacGuard)} onCancel={()=>setVacGuard(null)}/>}
     </div>
   );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCREEN: DIRECTORY CONTROL FILE
+// SCREEN: COMPREHENSIVE RECORDS DIRECTORY
 // ─────────────────────────────────────────────────────────────────────────────
-const MembersScreen = ({members,setMembers,plans,addAudit,currentUser,saveToDatabase}) => {
+const MembersScreen = ({members,setMembers,plans,settings,addAudit,currentUser,saveToDatabase}) => {
   const [search,setSearch]=useState("");
+  const [filter,setFilter]=useState("all");
   const [modal,setModal]=useState(false);
+  const [editing,setEditing]=useState(null);
   const [viewing,setViewing]=useState(null);
-  const [deleteGuard,setDeleteGuard]=useState(null);
   const [renewFor,setRenewFor]=useState(null);
   const [receipt,setReceipt]=useState(null);
 
   const blank={name:"",phone:"",address:"",planId:plans[0]?.id||"",seatNo:"",paid:false};
   const [form,setForm]=useState(blank);
 
-  const save=async()=>{
-    if(!form.name.trim()||!form.phone.trim()) return;
+  const takenSeats=members.filter(m=>m.seatNo!=null&&(!editing||m.id!==editing)).map(m=>parseInt(m.seatNo,10));
+  const seatOpts=[{value:"",label:"— No space allocated —"},...Array.from({length:settings.totalSeats},(_,i)=>i+1).map(n=>({value:String(n),label:takenSeats.includes(n)?`Unit Space ${n} (Occupied)`:`Unit Space ${n}`,disabled:takenSeats.includes(n)}))];
+
+  const save=async()=> {
+    if(!form.name.trim()||!form.phone.trim())return;
     const plan=plans.find(p=>p.id===form.planId);
-    const newM={id:genId(),name:form.name,phone:form.phone,address:form.address,planId:form.planId,seatNo:toSeatInt(form.seatNo),firstJoined:todayStr(),expiry:addDays(todayStr(),plan?.days||30),paid:form.paid,manualInactive:false,renewals:[]};
-    const updated = [...members, newM];
+    const seatNum=toSeatInt(form.seatNo);
+
+    let updated;
+    if(editing){
+      updated = members.map(m=>{
+        if(m.id===editing) return {...m,name:form.name,phone:form.phone,address:form.address,planId:form.planId,seatNo:seatNum,paid:form.paid};
+        if(seatNum!=null && parseInt(m.seatNo,10)===seatNum) return {...m,seatNo:null};
+        return m;
+      });
+      addAudit(currentUser,`Overwrote properties definition configurations for: ${form.name}`);
+    } else {
+      const newM={id:genId(),name:form.name,phone:form.phone,address:form.address,planId:form.planId,seatNo:seatNum,firstJoined:todayStr(),expiry:addDays(todayStr(),plan?.days||30),paid:form.paid,manualInactive:false,renewals:form.paid&&plan?[{planId:plan.id,planName:plan.name,amount:plan.price,from:todayStr(),to:addDays(todayStr(),plan.days),paidOn:todayStr(),paidTime:timeNow(),note:null}]:[]};
+      updated = [...members.map(m=>(seatNum!=null && parseInt(m.seatNo,10)===seatNum)?{...m,seatNo:null}:m),newM];
+      addAudit(currentUser,`Enrolled entity identity context trace block: ${form.name}`);
+    }
+
     setMembers(updated);
-    addAudit(currentUser,`Enrolled new core membership: ${form.name}`);
     await saveToDatabase(updated, "members");
     setModal(false);
-    setForm(blank);
   };
 
-  const handleRenew=async(id,p,r,pd,exp)=>{
-    const updated = members.map(x=>x.id===id?{...x,expiry:exp,planId:p.id,paid:pd,renewals:[...(x.renewals||[]),r]}:x);
+  const handleRenew=async(id,plan,renewal,paid,newExpiry)=>{
+    const updated = members.map(m=>m.id!==id?m:{...m,planId:plan.id,expiry:newExpiry,paid,manualInactive:false,renewals:[...(m.renewals||[]),renewal]});
     setMembers(updated);
-    addAudit(currentUser,`Executed manual renewal override chain logic for target`);
     await saveToDatabase(updated, "members");
   };
 
-  const filtered=members.filter(m=>m.name.toLowerCase().includes(search.toLowerCase())||m.id.toLowerCase().includes(search.toLowerCase()));
+  const filtered=members
+    .filter(m=>filter==="all"?true:getMemberStatus(m)===filter)
+    .filter(m=>m.name.toLowerCase().includes(search.toLowerCase())||m.id.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}><input placeholder="Search records registry..." value={search} onChange={e=>setSearch(e.target.value)} style={{padding:"10px 12px",borderRadius:RADIUS.md,border:`1px solid ${C.border}`,width:"72%",outline:"none",fontFamily:FONT}}/><Btn onClick={()=>setModal(true)} iconName="plus">Add</Btn></div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.3px"}}>Structural Registry Logs</div></div>
+        <Btn onClick={()=>{setEditing(null); setForm(blank); setModal(true);}} iconName="plus">Add Token</Btn>
+      </div>
+
+      <div style={{position:"relative",marginBottom:10}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search via tag identifier attributes..." style={{width:"100%",padding:"10px 12px",borderRadius:RADIUS.md,border:`1px solid ${C.border}`,outline:"none"}}/>
+      </div>
+
+      <div style={{display:"flex",gap:6,marginBottom:14,overflowX:"auto",paddingBottom:2}}>
+        {[["all","All Records"],["active","Active Stream"],["expiring","Alert Warnings"],["expired","Dead Terminations"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)} style={sTabBtn(filter===v)}>{l}</button>
+        ))}
+      </div>
+
       <div style={{display:"flex",flexDirection:"column",gap:10}}>
         {filtered.map(m=>(
           <Card key={m.id} style={{padding:14}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div><div style={{fontWeight:850,color:C.text,fontSize:15}}>{m.name}</div><div style={{fontSize:12,color:C.sub,marginTop:2}}>{m.id} · Space Unit Allocation: {m.seatNo?`Seat #${m.seatNo}`:"None"}</div></div>
-              <div style={{display:"flex",gap:4}}><Btn onClick={()=>setViewing(m)} variant="ghost" size="sm">Profile</Btn><Btn onClick={()=>setRenewFor(m)} variant="purple" size="sm">Renew</Btn><Btn onClick={()=>setDeleteGuard(m)} variant="danger" size="sm">✕</Btn></div>
+            <div style={{display:"flex",justifyContent:"space-between"}}>
+              <div><div style={{fontWeight:850,fontSize:15}}>{m.name}</div><div style={{fontSize:12,color:C.sub,marginTop:2}}>{m.id} · Terminal Ref: {m.phone}</div></div>
+              <StatusBadge status={getMemberStatus(m)}/>
+            </div>
+            <div style={{display:"flex",gap:4,marginTop:12}}>
+              <Btn onClick={()=>setViewing(m)} variant="ghost" size="sm" iconName="timeline">Profile</Btn>
+              <Btn onClick={()=>{setEditing(m.id); setForm({name:m.name,phone:m.phone,address:m.address||"",planId:m.planId,seatNo:m.seatNo!=null?String(m.seatNo):"",paid:m.paid}); setModal(true);}} variant="ghost" size="sm" iconName="edit">Modify</Btn>
+              <Btn onClick={async()=>{
+                const updated = members.filter(x=>x.id!==m.id);
+                setMembers(updated);
+                await saveToDatabase(updated, "members");
+              }} variant="danger" size="sm" iconName="trash"/>
             </div>
           </Card>
         ))}
       </div>
+
       {modal && (
-        <Modal title="Register Spatial Asset Account" onClose={()=>setModal(false)}>
-          <Field label="Full Identity Name" value={form.name} onChange={v=>setForm({...form,name:v})} placeholder="e.g. Satish Yadav" required/>
-          <Field label="Communications Terminal Line" value={form.phone} onChange={v=>setForm({...form,phone:v})} placeholder="10-digit number" required/>
-          <Btn onClick={save} iconName="check" full>Commit Account Registry</Btn>
+        <Modal title={editing?"Modify Profile Attributes":"Provision New Security Identity Profile"} onClose={()=>setModal(false)}>
+          <Field label="Client Structural Full Name" value={form.name} onChange={v=>setForm({...form,name:v})} required/>
+          <Field label="Communications Data Payload String (Phone)" value={form.phone} onChange={v=>setForm({...form,phone:v})} required/>
+          <Field label="Physical Address Metadata Location" value={form.address} onChange={v=>setForm({...form,address:v})}/>
+          <Field label="Spatial Floor Assignment Grid Index" value={form.seatNo} onChange={v=>setForm({...form,seatNo:v})} options={seatOpts}/>
+          <Field label="Selected Dynamic Core Fee Plan Bundle" value={form.planId} onChange={v=>setForm({...form,planId:v})} options={plans.map(p=>({value:p.id,label:`${p.name} Package (₹${p.price})`}))}/>
+          <label style={{display:"flex",alignItems:"center",gap:10,background:form.paid?C.greenLight:C.surfaceAlt,borderRadius:RADIUS.md,padding:"12px 14px",marginBottom:16,cursor:"pointer"}}>
+            <input type="checkbox" checked={form.paid} onChange={e=>setForm({...form,paid:e.target.checked})} style={{width:16,height:16}}/>
+            <div><div style={{fontWeight:700,fontSize:13}}>Mark Token Invoice Capital Paid Ledger Stream</div></div>
+          </label>
+          <Btn onClick={save} iconName="check" full>Commit Entity Block State</Btn>
         </Modal>
       )}
-      {deleteGuard && <DestructiveConfirm message="Record structural entity partition clean dump data wipe trigger?" confirmLabel="Purge Structural Asset" onConfirm={async()=>{
-        const updated = members.filter(x=>x.id!==deleteGuard.id);
-        setMembers(updated);
-        addAudit(currentUser,`Purged index allocation mapping profile permanently`);
-        await saveToDatabase(updated, "members");
-        setDeleteGuard(null);
-      }} onCancel={()=>setDeleteGuard(null)}/>}
+
       {viewing && <Modal title="Dynamic Context Data Matrix Ledger" onClose={()=>setViewing(null)} wide><MemberTimeline member={members.find(x=>x.id===viewing.id)||viewing} plans={plans} onRenew={()=>{ setRenewFor(viewing); setViewing(null); }} onReceipt={(r)=>setReceipt({member:viewing,renewal:r})}/></Modal>}
       {renewFor && <RenewModal member={renewFor} plans={plans} onRenew={handleRenew} onClose={()=>setRenewFor(null)}/>}
-      {receipt && <Receipt member={receipt.member} renewal={receipt.renewal} libName="StudySpace System" onClose={()=>setReceipt(null)}/>}
+      {receipt && <Receipt member={receipt.member} renewal={receipt.renewal} libName={settings.libraryName} onClose={()=>setReceipt(null)}/>}
     </div>
   );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCREEN: FINANCIAL BALANCE LEDGERS
+// SCREEN: FINANCIAL BALANCING LEDGERS
 // ─────────────────────────────────────────────────────────────────────────────
-const FeesScreen = ({members,setMembers,saveToDatabase}) => {
+const FeesScreen = ({members,setMembers,plans,addAudit,currentUser,saveToDatabase}) => {
+  const [filter, setFilter] = useState("all");
+  const [renewFor, setRenewFor] = useState(null);
+  const [receipt, setReceipt] = useState(null);
+
   const allPaid=members.reduce((s,m)=>s+(m.renewals||[]).reduce((a,r)=>a+r.amount,0),0);
-  return(
+  const pending=members.filter(m=>!m.paid).reduce((s,m)=>s+(plans.find(p=>p.id===m.planId)?.price||0),0);
+  const filtered=filter==="paid"?members.filter(m=>m.paid):filter==="unpaid"?members.filter(m=>!m.paid):members;
+
+  return (
     <div>
-      <div style={{marginBottom:16}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.3px"}}>Capital Financial Balancing Ledger</div></div>
-      <div style={{display:"flex",gap:10,marginBottom:14}}><StatBox icon="fee" label="Aggregated Balanced Revenue" value={`₹${allPaid.toLocaleString()}`} color={C.green}/></div>
-      {members.map(m=>(
-        <Card key={m.id} style={{padding:14,marginBottom:8}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div><div style={{fontWeight:700,color:C.text}}>{m.name}</div><div style={{fontSize:12,color:C.sub,fontFamily:"monospace"}}>{m.id}</div></div>
-            <Btn onClick={async()=>{
-              const updated = members.map(x=>x.id===m.id?{...x,paid:!x.paid}:x);
-              setMembers(updated);
-              await saveToDatabase(updated, "members");
-            }} variant={m.paid?"ghost":"green"} size="sm">{m.paid?"Revert Ledger Transaction":"Collect Token Cash"}</Btn>
-          </div>
+      <div style={{marginBottom:16}}><div style={{fontSize:20,fontWeight:900,letterSpacing:"-0.3px"}}>Capital Financial Balancing Ledgers</div></div>
+      <div style={{display:"flex",gap:10,marginBottom:14}}>
+        <StatBox icon="fee" label="Aggregated Revenue" value={`₹${allPaid.toLocaleString()}`} color={C.green}/>
+        <StatBox icon="bell" label="Invoice Receivables" value={`₹${pending.toLocaleString()}`} color={C.red}/>
+      </div>
+
+      <div style={{display:"flex",gap:6,marginBottom:12}}>
+        {[[ "all", "All Matrix Logs" ],[ "paid", "Cleared Invoices" ],[ "unpaid", "Outstanding Pending Balance" ]].map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)} style={sTabBtn(filter===v)}>{l}</button>
+        ))}
+      </div>
+
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {filtered.map(m=>{
+          const p = plans.find(x=>x.id===m.planId);
+          const last = (m.renewals||[]).slice(-1)[0];
+          return (
+            <Card key={m.id} style={{padding:14}}>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <div><div style={{fontWeight:800}}>{m.name}</div><div style={{fontSize:12,color:C.sub,marginTop:2}}>{m.id} · Assigned Node: {m.seatNo?`Space Unit #${m.seatNo}`:"None"}</div></div>
+                <div style={{textAlign:"right"}}><div style={{fontWeight:900,fontFamily:"monospace",color:C.teal}}>₹{p?.price||0}</div><div style={{fontSize:10,color:C.faint}}>{p?.name} Package</div></div>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:12,gap:4,flexWrap:"wrap"}}>
+                <div style={{display:"flex",gap:4}}><Badge text={m.paid?"Invoice Cleared":"Outstanding Balance"} color={m.paid?C.green:C.red} bg={m.paid?C.greenLight:C.redLight}/><StatusBadge status={getMemberStatus(m)}/></div>
+                <div style={{display:"flex",gap:4}}>
+                  <Btn onClick={async()=>{
+                    const updated = members.map(x=>{
+                      if(x.id!==m.id) return x;
+                      const nextPaid = !x.paid;
+                      let rArr = [...(x.renewals||[])];
+                      if(nextPaid && p) rArr.push({planId:p.id,planName:p.name,amount:p.price,from:todayStr(),to:addDays(todayStr(),p.days),paidOn:todayStr(),paidTime:timeNow(),note:"Direct reconciliation mark paid override link logic"});
+                      return {...x, paid:nextPaid, renewals:rArr};
+                    });
+                    setMembers(updated);
+                    await saveToDatabase(updated, "members");
+                  }} variant={m.paid?"ghost":"green"} size="sm">{m.paid?"Unlink Cleared Status":"Clear Balance Cash"}</Btn>
+                  {(getMemberStatus(m)==="expired"||getMemberStatus(m)==="expiring") && <Btn onClick={()=>setRenewFor(m)} variant="purple" size="sm">Renew</Btn>}
+                  {last && <Btn onClick={()=>setReceipt({member:m,renewal:last})} variant="ghost" size="sm" iconName="print"/>}
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+      {renewFor && <RenewModal member={renewFor} plans={plans} onRenew={async(id,p,r,pd,exp)=>{
+        const updated = members.map(x=>x.id===id?{...x,expiry:exp,planId:p.id,paid:pd,renewals:[...(x.renewals||[]),r]}:x);
+        setMembers(updated);
+        await saveToDatabase(updated, "members");
+      }} onClose={()=>setRenewFor(null)}/>}
+      {receipt && <Receipt member={receipt.member} renewal={receipt.renewal} libName={settings.libraryName} onClose={()=>setReceipt(null)}/>}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCREEN: FULL COMPREHENSIVE ADMIN PARAMETERS INTERFACE PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+const AdminPanel = ({settings,setSettings,plans,setPlans,members,staff,setStaff,auditLog,addAudit,currentUser,saveToDatabase}) => {
+  const [tab, setTab] = useState("library");
+  const [s, setS] = useState({...settings});
+  const [origS] = useState({...settings});
+  const [savedStatusAlert, setSavedStatusAlert] = useState(false);
+
+  const [pModal, setPModal] = useState(false);
+  const [editPlanId, setEditPlanId] = useState(null);
+  const [pForm, setPForm] = useState({name:"",days:"",price:""});
+
+  const [sfModal, setStaffModal] = useState(false);
+  const [editSfId, setEditStaffId] = useState(null);
+  const [sfForm, setSfForm] = useState({name:"",email:"",role:"staff",pin:""});
+
+  const settingsDirty=JSON.stringify(s)!==JSON.stringify(origS);
+
+  const commitGlobalConfigurationSettings=async()=> {
+    setSettings(s);
+    setSavedStatusAlert(true);
+    setTimeout(()=>setSavedStatusAlert(false),2000);
+    addAudit(currentUser,"Calibrated system matrix boundary constants metadata variables definitions");
+    await supabase.from("studyspace_kv").upsert([{ key: "settings", value: s }]);
+  };
+
+  const savePackagePlanBundle=async()=> {
+    if(!pForm.name||!pForm.days||!pForm.price)return;
+    const data={name:pForm.name,days:Number(pForm.days),price:Number(pForm.price)};
+    let updated;
+    if(editPlanId){
+      updated = plans.map(p=>p.id===editPlanId?{...p,...data}:p);
+      addAudit(currentUser,`Modified tariff metrics parameters configuration schema token: ${pForm.name}`);
+    }else{
+      updated = [...plans,{id:"p"+Date.now(),...data}];
+      addAudit(currentUser,`Appended target subscription schema matrix pack index allocation bundle: ${pForm.name}`);
+    }
+    setPlans(updated);
+    await supabase.from("studyspace_kv").upsert([{ key: "plans", value: updated }]);
+    setPModal(false);
+  };
+
+  const saveStaffAccount=async()=> {
+    if(!sfForm.name||!sfForm.email||!sfForm.pin)return;
+    let updated;
+    if(editSfId){
+      updated = staff.map(sf=>sf.id===editSfId?{...sf,...sfForm}:sf);
+      addAudit(currentUser,`Overwrote terminal security mapping role profile attributes permissions parameters for target`);
+    }else{
+      updated = [...staff,{id:"S"+Date.now(),...sfForm,active:true,createdAt:todayStr()}];
+      addAudit(currentUser,`Provisioned structural security account tracking entity metadata parameters signature entry block`);
+    }
+    setStaff(updated);
+    await supabase.from("studyspace_kv").upsert([{ key: "staff", value: updated }]);
+    setStaffModal(false);
+  };
+
+  const exportSystemDumpDownloadFile=()=> {
+    const backupDataPayloadBlock={exportedAt:fmtDT(),settings,plans,members,staff:staff.map(({pin,...rest})=>rest),auditLog};
+    const blob=new Blob([JSON.stringify(backupDataPayloadBlock,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download=`studyspace-ledger-dump-${todayStr()}.json`;a.click();
+    addAudit(currentUser,"Dispatched standard cloud infrastructure storage package dump serialization execution trace sync backup file download");
+  };
+
+  return (
+    <div>
+      <div style={{display:"flex",gap:4,marginBottom:16,overflowX:"auto",paddingBottom:4}}>
+        {[[ "library", "Config" ],[ "plans", "Plans Setup" ],[ "staff", "Staff Control" ],[ "audit", "Logs Feed" ],[ "backup", "Data Engine" ]].map(([v,l])=>(
+          <button key={v} onClick={()=>setTab(v)} style={sTabBtn(tab===v,C.indigo)}>{l}</button>
+        ))}
+      </div>
+
+      {tab==="library" && (
+        <Card style={{padding:16}}>
+          <Divider label="System Configuration Parameters"/>
+          <Field label="Enterprise Domain System Label" value={s.libraryName} onChange={v=>setS({...s,libraryName:v})}/>
+          <Field label="Spatial Boundary Ceiling Limit (Total Space Seats)" type="number" value={String(s.totalSeats)} onChange={v=>setS({...s,totalSeats:Number(v)})}/>
+          <Field label="Geographical Infrastructure Location Label" value={s.address} onChange={v=>setS({...s,address:v})}/>
+          {settingsDirty && <Alert color={C.amber} bg={C.amberLight} iconName="warn" style={{marginBottom:12}}>Calibrations data modifications mismatch detected.</Alert>}
+          {savedStatusAlert && <Alert color={C.green} bg={C.greenLight} iconName="check" style={{marginBottom:12}}>Structural calibration variables saved successfully.</Alert>}
+          <Btn onClick={commitGlobalConfigurationSettings} iconName="check" full>Save Configurations</Btn>
         </Card>
-      ))}
+      )}
+
+      {tab==="plans" && (
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}><div style={{fontWeight:800}}>Tariff Matrices Bundles</div><Btn onClick={()=>{setEditPlanId(null); setPForm({name:"",days:"",price:""}); setPModal(true);}} size="sm" iconName="plus">Add</Btn></div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {plans.map(p=>(
+              <Card key={p.id} style={{padding:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><b style={{fontSize:14}}>{p.name} Package</b><div style={{fontSize:11,color:C.sub}}>{p.days} days baseline parameter cycle</div></div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}><b style={{fontFamily:"monospace"}}>₹{p.price}</b><button onClick={()=>{setEditPlanId(p.id); setPForm({name:p.name,days:String(p.days),price:String(p.price)}); setPModal(true);}} style={{background:"none",border:"none",color:C.indigo,cursor:"pointer",fontWeight:700}}>Edit</button></div>
+              </Card>
+            ))}
+          </div>
+          {pModal && (
+            <Modal title="Configure Pricing Index Tariff Schema" onClose={()=>setPModal(false)}>
+              <Field label="Profile Pack Label Name" value={pForm.name} onChange={v=>setPForm({...pForm,name:v})}/>
+              <Field label="Tariff Price Token Baseline Cost Value (₹)" type="number" value={pForm.price} onChange={v=>setPForm({...pForm,price:v})}/>
+              <Field label="Lifespan Temporal Parameter Threshold Limit Count (Days)" type="number" value={pForm.days} onChange={v=>setPForm({...pForm,days:v})}/>
+              <Btn onClick={savePackagePlanBundle} full>Commit Pricing Matrix Package</Btn>
+            </Modal>
+          )}
+        </div>
+      )}
+
+      {tab==="staff" && (
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}><div style={{fontWeight:800}}>Operational Terminal Roles Access</div><Btn onClick={()=>{setEditStaffId(null); setSfForm({name:"",email:"",role:"staff",pin:""}); setStaffModal(true);}} size="sm" iconName="plus">Add Staff</Btn></div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {staff.map(sf=>(
+              <Card key={sf.id} style={{padding:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><b>{sf.name}</b><div style={{fontSize:11,color:C.sub}}>{sf.email} · Identity: {sf.id}</div></div>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}><Badge text={sf.role} color={C.purple} bg={C.purpleLight}/><button onClick={()=>{setEditStaffId(sf.id); setSfForm({name:sf.name,email:sf.email,role:sf.role,pin:sf.pin}); setStaffModal(true);}} style={{background:"none",border:"none",color:C.indigo,cursor:"pointer",fontSize:12,fontWeight:700}}>Edit Profile</button></div>
+              </Card>
+            ))}
+          </div>
+          {sfModal && (
+            <Modal title="Calibrate Authorization Credentials Matrix Profile" onClose={()=>setStaffModal(false)}>
+              <Field label="Staff Member Legal Full Identity Name" value={sfForm.name} onChange={v=>setSfForm({...sfForm,name:v})}/>
+              <Field label="Access Mapping Authentication Address Identity (Email)" value={sfForm.email} onChange={v=>setSfForm({...sfForm,email:v})}/>
+              <Field label="Access Framework Permission Assignment Matrix Level" value={sfForm.role} onChange={v=>setSfForm({...sfForm,role:v})} options={[{value:"staff",label:"Staff Unit Operations Execution access"},{value:"superadmin",label:"Superadmin Universal Override core access"}]}/>
+              <Field label="4-Digit Numerical Decryption Passcode Entry String Token" type="password" value={sfForm.pin} onChange={v=>setSfForm({...sfForm,pin:v.slice(0,4)})} placeholder="••••"/>
+              <Btn onClick={saveStaffAccount} full>Commit Security Profile Credentials Entity</Btn>
+            </Modal>
+          )}
+        </div>
+      )}
+
+      {tab==="audit" && <div style={{maxHeight:340,overflowY:"auto",background:C.white,border:`1px solid ${C.border}`,borderRadius:RADIUS.md,padding:10}}>{auditLog.slice().reverse().map((l,i)=>(<div key={i} style={{fontSize:11,padding:"8px 6px",borderBottom:`1px solid ${C.border}`,lineHeight:1.4}}><b>{l.by}</b>: {l.action} <span style={{color:C.faint,float:"right",fontSize:10}}>{l.at}</span></div>))}</div>}
+      {tab==="backup" && <Card style={{padding:20,textAlign:"center"}}><Icon name="backup" size={32} color={C.indigo} style={{margin:"0 auto 10px"}}/><div style={{fontSize:15,fontWeight:800,marginBottom:6}}>Download Structural System State Payload Ledgers Dump</div><div style={{fontSize:12,color:C.sub,marginBottom:16}}>Dispatches single comprehensive unencrypted serialization JSON file entity structure trace.</div><Btn onClick={exportSystemDumpDownloadFile} variant="indigo" iconName="download" full>Download Engine JSON Dump</Btn></Card>}
     </div>
   );
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCREEN: SYSTEM CONFIG MANAGEMENT
-// ─────────────────────────────────────────────────────────────────────────────
-const AdminPanel = ({settings,setSettings,auditLog,saveToDatabase}) => {
-  const [tab,setTab] = useState("library");
-  const [s,setS] = useState({...settings});
-  return(
-    <div>
-      <div style={{display:"flex",gap:6,marginBottom:16}}>{[[ "library", "System Profile Configuration" ],[ "audit", "Real-Time System Log Feed" ]].map(([v,l])=>(<button key={v} onClick={()=>setTab(v)} style={sTabBtn(tab===v,C.indigo)}>{l}</button>))}</div>
-      {tab==="library" && <Card style={{padding:16}}><Field label="Enterprise Management Label String" value={s.libraryName} onChange={v=>setS({...s,libraryName:v})}/><Field label="Dynamic Spatial Count Upper Ceiling Limit" value={String(s.totalSeats)} type="number" onChange={v=>setS({...s,totalSeats:Number(v)})}/><Btn onClick={async()=>{setSettings(s); await saveToDatabase(s, "settings");}} iconName="check" full>Commit Structural Calibration Changes</Btn></Card>}
-      {tab==="audit" && <div style={{maxHeight:340,overflowY:"auto",background:C.white,border:`1px solid ${C.border}`,borderRadius:RADIUS.md,padding:10}}>{auditLog.slice().reverse().map((l,i)=>(<div key={i} style={{fontSize:12,padding:"8px 6px",borderBottom:`1px solid ${C.border}`}}><b>{l.by}</b>: {l.action} <span style={{color:C.faint,float:"right"}}>{l.at}</span></div>))}</div>}
-    </div>
-  );
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SCREEN: ACCESS ACCOUNT TERMINAL GATEWAY
+// SCREEN: SECURITY CLEARANCE SIGN-IN CONSOLE TERMINAL
 // ─────────────────────────────────────────────────────────────────────────────
 const LoginScreen = ({staff,onLogin}) => {
   const [email,setEmail]=useState("");
   const [pin,setPin]=useState("");
   const [error,setError]=useState("");
-  const doLogin=()=>{
+  const doLogin=()=> {
     const sf=staff.find(s=>s.email.toLowerCase()===email.toLowerCase()&&s.pin===pin&&s.active);
-    sf?onLogin(sf):setError("Invalid structural encryption credentials mapping match.");
+    sf?onLogin(sf):setError("Authorization security signature clearance mapping verification failed.");
   };
   return(
     <div style={{minHeight:"100vh",background:`linear-gradient(135deg,${C.teal}18,${C.bg})`,display:"flex",alignItems:"center",justifyContent:"center",padding:20,fontFamily:FONT}}>
       <Card style={{padding:32,width:"100%",maxWidth:360}}>
-        <div style={{textAlign:"center",marginBottom:24}}><div style={{width:54,height:54,background:C.tealGrad,borderRadius:RADIUS.md,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px"}}><Icon name="shield" size={24} color={C.white}/></div><div style={{fontSize:20,fontWeight:950,color:C.text}}>StudySpace Portal</div><div style={{fontSize:12,color:C.sub,marginTop:2}}>System Gateway Architecture Terminal</div></div>
-        <Field label="Security Credentials Mapping Email" value={email} onChange={setEmail} placeholder="yourname@domain.com"/>
-        <Field label="4-Digit Encryption Access Passkey PIN" value={pin} type="password" onChange={(v)=>setPin(v.slice(0,4))} placeholder="••••"/>
+        <div style={{textAlign:"center",marginBottom:24}}><div style={{width:54,height:54,background:C.tealGrad,borderRadius:RADIUS.md,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px"}}><Icon name="shield" size={24} color={C.white}/></div><div style={{fontSize:20,fontWeight:950,color:C.text,letterSpacing:"-0.5px"}}>StudySpace Engine</div><div style={{fontSize:12,color:C.sub,marginTop:2}}>Enterprise System Secure Access Matrix Terminal Terminal</div></div>
+        <Field label="System Account Mapping Email Address Identity" value={email} onChange={setEmail} placeholder="e.g. manager@domain.com"/>
+        <Field label="4-Digit Secure Verification Decryption Passcode PIN" value={pin} type="password" onChange={setPin} placeholder="••••"/>
         {error?<Alert color={C.red} bg={C.redLight} iconName="warn" style={{marginBottom:14}}>{error}</Alert>:null}
-        <div style={{marginTop:12}}><Btn onClick={doLogin} full>Authenticate Session Matrix</Btn></div>
+        <div style={{marginTop:12}}><Btn onClick={doLogin} full>Verify Matrix Identity Credentials Signature Token</Btn></div>
+        <div style={{marginTop:20,padding:12,background:C.surfaceAlt,borderRadius:RADIUS.md,fontSize:10,color:C.sub,lineHeight:1.6}}>
+          <b>Default Initial Bypass Signatures:</b><br/>
+          Owner: admin@studyspace.com | Passcode PIN: 1234<br/>
+          Staff Member: rahul@studyspace.com | Passcode PIN: 5678
+        </div>
       </Card>
     </div>
   );
@@ -599,12 +852,12 @@ const BottomNav = ({page,setPage,perms}) => {
     {id:"seats",    icon:"seat",    label:"Seats",   perm:"seats"},
     {id:"members",  icon:"users",   label:"Members", perm:"members"},
     {id:"fees",     icon:"fee",     label:"Fees",    perm:"fees"},
-    {id:"admin",    icon:"settings",label:"Admin",   perm:"admin"},
+    {id:"admin",    icon:"shield",  label:"Admin",   perm:"admin"},
   ].filter(t=>perms.includes(t.perm));
   return(
     <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:"rgba(255,255,255,0.96)",backdropFilter:"blur(12px)",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:100,boxShadow:SH_LG}}>
       {tabs.map(t=>(
-        <button key={t.id} onClick={()=>setPage(t.id)} style={{flex:1,padding:"12px 0 10px",background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,transition:TR}}>
+        <button key={t.id} onClick={()=>setPage(t.id)} style={{flex:1,padding:"12px 0 10px",background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
           <Icon name={t.icon} size={20} color={page===t.id?C.teal:C.faint}/>
           <span style={{fontSize:10,fontWeight:page===t.id?800:500,color:page===t.id?C.teal:C.faint,fontFamily:FONT}}>{t.label}</span>
         </button>
@@ -613,21 +866,26 @@ const BottomNav = ({page,setPage,perms}) => {
   );
 };
 
+const StatusBadge = ({status}) => {
+  const sm=STATUS_META[status]||STATUS_META.inactive;
+  return <Badge text={sm.label} color={sm.color} bg={sm.bg} icon={sm.icon}/>;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
-// MAIN OPERATIONAL APP ROOT CONTROLLER
+// SYSTEM CORE MAIN RUNTIME AGGREGATION BLOCK ENVIRONMENT
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
   const [currentUser,setCurrentUser]=useState(null);
   const [page,setPage]=useState("dashboard");
   const [members,setMembers]=useState([]);
-  const [plans,setPlans]=useState(DEFAULT_PLANS);
+  const [plans,setPlans]=useState([]);
   const [settings,setSettings]=useState(DEFAULT_SETTINGS);
-  const [staff,setStaff]=useState(DEFAULT_STAFF);
-  const [auditLog,setAuditLog]=useState([{by:"System Engine Core",action:"Operational framework parameters live optimization complete",at:fmtDT()}]);
+  const [staff,setStaff]=useState([]);
+  const [auditLog,setAuditLog]=useState([{by:"Core Engine Kernel",action:"Boot environment systems calibrations parameters optimized successfully initialization done",at:fmtDT()}]);
   const [loading, setLoading] = useState(true);
 
   const addAudit=useCallback((user,action)=>{
-    const newLog = {by:user?.name||"System Core Control",action,at:fmtDT()};
+    const newLog = {by:user?.name||"System Core Automation Pipeline",action,at:fmtDT()};
     setAuditLog(prev=> {
       const updated = [...prev, newLog];
       if (supabase) supabase.from("studyspace_logs").insert([newLog]).then();
@@ -638,13 +896,9 @@ export default function App() {
   const saveToDatabase = async (payload, table) => {
     if (!supabase) return;
     try {
-      if (table === "settings") {
-        await supabase.from("studyspace_kv").upsert([{ key: "settings", value: payload }]);
-      } else if (table === "members") {
-        await supabase.from("studyspace_kv").upsert([{ key: "members", value: payload }]);
-      }
+      await supabase.from("studyspace_kv").upsert([{ key: table, value: payload }]);
     } catch (e) {
-      console.error("Delayed structural write state pipeline sync conflict: ", e);
+      console.error("Data pipeline write execution sync exception delayed lock: ", e);
     }
   };
 
@@ -652,28 +906,43 @@ export default function App() {
     async function initDatabaseBootstrapPipeline() {
       if (!supabase) {
         setMembers(DEFAULT_MEMBERS);
+        setPlans(DEFAULT_PLANS);
+        setStaff(DEFAULT_STAFF);
         setLoading(false);
         return;
       }
       try {
         const { data: kvData } = await supabase.from("studyspace_kv").select("*");
-        let dbMembers = kvData?.find(x => x.key === "members")?.value;
+        
+        let dbMembers  = kvData?.find(x => x.key === "members")?.value;
         let dbSettings = kvData?.find(x => x.key === "settings")?.value;
+        let dbPlans    = kvData?.find(x => x.key === "plans")?.value;
+        let dbStaff    = kvData?.find(x => x.key === "staff")?.value;
         const { data: logs } = await supabase.from("studyspace_logs").select("*");
 
+        // Seed initialization logic if cloud tables are absolutely blank
         if (!dbMembers) {
           await supabase.from("studyspace_kv").insert([
             { key: "members", value: DEFAULT_MEMBERS },
-            { key: "settings", value: DEFAULT_SETTINGS }
+            { key: "settings", value: DEFAULT_SETTINGS },
+            { key: "plans", value: DEFAULT_PLANS },
+            { key: "staff", value: DEFAULT_STAFF }
           ]);
           setMembers(DEFAULT_MEMBERS);
+          setPlans(DEFAULT_PLANS);
+          setSettings(DEFAULT_SETTINGS);
+          setStaff(DEFAULT_STAFF);
         } else {
           setMembers(dbMembers);
           if (dbSettings) setSettings(dbSettings);
+          if (dbPlans) setPlans(dbPlans);
+          if (dbStaff) setStaff(dbStaff);
         }
         if (logs && logs.length > 0) setAuditLog(logs);
       } catch (err) {
         setMembers(DEFAULT_MEMBERS);
+        setPlans(DEFAULT_PLANS);
+        setStaff(DEFAULT_STAFF);
       } finally {
         setLoading(false);
       }
@@ -681,10 +950,10 @@ export default function App() {
     initDatabaseBootstrapPipeline();
   }, []);
 
-  const handleLogin=sf=>{setCurrentUser(sf); addAudit(sf,`Session instance link authenticated pipeline initialized (${sf.role})`);};
+  const handleLogin=sf=>{setCurrentUser(sf); addAudit(sf,`Cleared system access verification checkpoint terminal token successfully pipeline initialized (${sf.role})`);};
 
   if (loading) {
-    return <div style={{display:"flex",minHeight:"100vh",alignItems:"center",justifyContent:"center",fontFamily:FONT,background:C.bg,color:C.teal,fontWeight:700}}>Syncing Secure Platform Ledger Stream...</div>;
+    return <div style={{display:"flex",minHeight:"100vh",alignItems:"center",justifyContent:"center",fontFamily:FONT,background:C.bg,color:C.teal,fontWeight:700}}>Syncing Global Enterprise Identity Cloud Ledgers Stream...</div>;
   }
 
   if(!currentUser) return <LoginScreen staff={staff} onLogin={handleLogin}/>;
@@ -693,11 +962,14 @@ export default function App() {
 
   return(
     <div style={{background:C.bg,minHeight:"100vh",fontFamily:FONT,maxWidth:480,margin:"0 auto",position:"relative",boxShadow:SH_LG}}>
+      {/* Dynamic Main App Global Header Bar Unit */}
       <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:"12px 16px",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:90,boxShadow:SH_SM}}>
         <div style={{width:34,height:34,background:C.tealGrad,borderRadius:RADIUS.sm,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:SH_SM}}><Icon name="audit" size={16} color={C.white}/></div>
         <div style={{flex:1,minWidth:0}}><div style={{fontWeight:800,fontSize:14,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{settings.libraryName}</div></div>
-        <Btn onClick={()=>{setCurrentUser(null); setPage("dashboard");}} variant="ghost" size="sm">Exit Space</Btn>
+        <Btn onClick={()=>{setCurrentUser(null); setPage("dashboard");}} variant="ghost" size="sm">Exit Matrix</Btn>
       </div>
+
+      {/* Main Container Core Router Blocks Layout Viewport */}
       <div style={{padding:"16px 14px 90px"}}>
         {page === "dashboard" ? <Dashboard members={members} settings={settings}/> : null}
         {page === "seats" && perms.includes("seats") ? <SeatsScreen {...sharedProps}/> : null}
@@ -705,6 +977,8 @@ export default function App() {
         {page === "fees" && perms.includes("fees") ? <FeesScreen {...sharedProps}/> : null}
         {page === "admin" && perms.includes("admin") ? <AdminPanel {...sharedProps}/> : null}
       </div>
+
+      {/* Persistent Global Context Routing Control Bar Array */}
       <BottomNav page={page} setPage={setPage} perms={perms}/>
     </div>
   );
