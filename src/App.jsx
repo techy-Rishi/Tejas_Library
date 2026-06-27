@@ -207,7 +207,10 @@ const DEFAULT_STAFF = [
 ];
 
 // ─── DEV CREDENTIALS (hidden from owner) ────────────────────────────────────
-const DEV_CREDENTIALS = { email:"dev@tejaslib.internal", pin:"9999" };
+const DEV_CREDENTIALS = {
+  email: import.meta.env.VITE_DEV_EMAIL || "",
+  pin:   import.meta.env.VITE_DEV_PIN   || "",
+};
 
 const ROLE_PERMS = {
   superadmin: ["dashboard","seats","members","fees","admin","audit"],
