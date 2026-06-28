@@ -1666,7 +1666,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
         ]);
         if (mRes.data  && mRes.data.length>0)  setMembers(mRes.data.map(r=>({ ...r, renewals:r.renewals||[] })));
         if (pRes.data  && pRes.data.length>0)  setPlans(pRes.data);
-        if (sRes.data) setSettings({...DEFAULT_SETTINGS, ...sRes.data});
+        if (sRes.data) setSettings({ libraryName: sRes.data.libraryName || sRes.data.libraryname || DEFAULT_SETTINGS.libraryName, totalSeats: sRes.data.totalSeats || sRes.data.totalseats || DEFAULT_SETTINGS.totalSeats, defaultFee: sRes.data.defaultFee || sRes.data.defaultfee || DEFAULT_SETTINGS.defaultFee, address: sRes.data.address || DEFAULT_SETTINGS.address, timing: sRes.data.timing || DEFAULT_SETTINGS.timing });
         if (stRes.data && stRes.data.length>0) setStaff(stRes.data.map(s=>({...s, active:s.active===true||s.active==="true"||s.active===1})));
         else setStaff(DEFAULT_STAFF);
         if (mRes.error) console.error("members:", mRes.error.message);
