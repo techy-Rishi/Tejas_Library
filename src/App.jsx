@@ -1785,42 +1785,40 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     if (error) console.error("Staff save error:", error.message);
   };
 
-  // ─── AUTO SAVE DEBOUNCED TRIGGERS ──────────────────────────────────────────
+  // ─── AUTO SAVE (FIXED WITH RESET ON USER CHANGE) ─────────────────────────
   const membersTimer  = useRef(null);
   const settingsTimer = useRef(null);
   const plansTimer    = useRef(null);
   const staffTimer    = useRef(null);
 
   useEffect(() => {
-    if (!supabase || !synced) return;
+    if (!supabase || !synced || !currentUser) return; // FIX: Strict user presence check
     clearTimeout(membersTimer.current);
     membersTimer.current = setTimeout(() => saveMembers(members), 1500);
     return () => clearTimeout(membersTimer.current);
-  }, [members, synced]);
+  }, [members, synced, currentUser]); // Added currentUser here
 
   useEffect(() => {
-    if (!supabase || !synced) return;
+    if (!supabase || !synced || !currentUser) return;
     clearTimeout(settingsTimer.current);
     settingsTimer.current = setTimeout(() => saveSettings(settings), 1000);
     return () => clearTimeout(settingsTimer.current);
-  }, [settings, synced]);
+  }, [settings, synced, currentUser]); // Added currentUser here
 
   useEffect(() => {
-    if (!supabase || !synced) return;
+    if (!supabase || !synced || !currentUser) return;
     clearTimeout(plansTimer.current);
     plansTimer.current = setTimeout(() => savePlans(plans), 1000);
     return () => clearTimeout(plansTimer.current);
-  }, [plans, synced]);
+  }, [plans, synced, currentUser]); // Added currentUser here
 
   useEffect(() => {
-    if (!supabase || !synced) return;
+    if (!supabase || !synced || !currentUser) return;
     clearTimeout(staffTimer.current);
     staffTimer.current = setTimeout(() => saveStaff(staff.filter(s => !s.id.startsWith("DEV"))), 1000);
     return () => clearTimeout(staffTimer.current);
-  }, [staff, synced]);
+  }, [staff, synced, currentUser]); // Added currentUser here
 
-  return { syncing, synced, syncError };
-}
 
 
 // ─── SAVE FUNCTIONS ─────────────────────────────────────────────────────────
