@@ -1669,13 +1669,42 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced]   = useState(false);
   const [syncError, setSyncError] = useState(null);
-  const loaded = useRef(false);
 
-  // Load from Supabase on mount
+  // ─── TIMER REFS declared BEFORE load useEffect so they are accessible inside it ───
+  const membersTimer  = useRef(null);
+  const settingsTimer = useRef(null);
+  const plansTimer    = useRef(null);
+  const staffTimer    = useRef(null);
+
+  // Helper: atomically kill every pending auto-save timer
+  const killAllTimers = useCallback(() => {
+    clearTimeout(membersTimer.current);
+    clearTimeout(settingsTimer.current);
+    clearTimeout(plansTimer.current);
+    clearTimeout(staffTimer.current);
+    membersTimer.current  = null;
+    settingsTimer.current = null;
+    plansTimer.current    = null;
+    staffTimer.current    = null;
+  }, []);
+
+  // ─── LOAD FROM SUPABASE — re-runs on every currentUser change ───────────────
   useEffect(() => {
     if (!supabase) return;
-    loaded.current = false;
-    loaded.current = true;
+
+    // ── STEP 1: Kill all stale auto-save timers from previous session FIRST ──
+    // This is the atomic guard that prevents the race condition where stale
+    // debounced timers fire during the 1-2s fetch window and overwrite live data.
+    killAllTimers();
+
+    // ── STEP 2: Mark synced=false so auto-save effects are fully blocked ──────
+    // Auto-save guards check `synced`, so resetting it here creates a hard lock
+    // that holds until fresh data has been loaded for the new user session.
+    setSynced(false);
+    setSyncError(null);
+
+    let cancelled = false; // prevent stale async state updates if effect re-runs
+
     const load = async () => {
       setSyncing(true);
       try {
@@ -1685,6 +1714,8 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
           supabase.from("settings").select("*").eq("id", 1).single(),
           supabase.from("staff").select("*"),
         ]);
+
+        if (cancelled) return; // effect was cleaned up before fetch completed
 
         // FIX: Mapping lowercase fields from Postgres to camelCase state safely
         if (mRes.data && mRes.data.length > 0) {
@@ -1724,17 +1755,28 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
         } else {
           setStaff(DEFAULT_STAFF);
         }
-        
-        setSynced(true);
+
+        // ── STEP 3: Only unlock auto-save AFTER all fresh data is committed ──
+        if (!cancelled) setSynced(true);
       } catch(e) {
-        setSyncError("Supabase load failed: " + e.message);
+        if (!cancelled) setSyncError("Supabase load failed: " + e.message);
       } finally {
-        setSyncing(false);
-        setLoading(false);
+        if (!cancelled) {
+          setSyncing(false);
+          setLoading(false);
+        }
       }
     };
+
     load();
-  }, [currentUser]);
+
+    // Cleanup: if currentUser changes again before fetch completes, cancel the
+    // in-flight load and kill any timers that may have snuck through.
+    return () => {
+      cancelled = true;
+      killAllTimers();
+    };
+  }, [currentUser, killAllTimers]);
 
   // ─── SAVE FUNCTIONS (FIXED TO EXPLICITLY WRITE TO LOWERCASE POSTGRES COLUMNS) ───
   const saveMembers = async (data) => {
@@ -1786,40 +1828,38 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     if (error) console.error("Staff save error:", error.message);
   };
 
-  // ─── AUTO SAVE (FIXED WITH RESET ON USER CHANGE) ─────────────────────────
-  const membersTimer  = useRef(null);
-  const settingsTimer = useRef(null);
-  const plansTimer    = useRef(null);
-  const staffTimer    = useRef(null);
+  // ─── AUTO-SAVE EFFECTS — gated behind synced AND currentUser ─────────────
+  // Because synced is reset to false at the very start of the load effect above,
+  // none of these can fire during the user-switch window. They only activate once
+  // fresh data has been fully committed and setSynced(true) has been called.
 
   useEffect(() => {
-    if (!supabase || !synced || !currentUser) return; // FIX: Strict user presence check
+    if (!supabase || !synced || !currentUser) return;
     clearTimeout(membersTimer.current);
     membersTimer.current = setTimeout(() => saveMembers(members), 1500);
     return () => clearTimeout(membersTimer.current);
-  }, [members, synced, currentUser]); // Added currentUser here
+  }, [members, synced, currentUser]);
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
     clearTimeout(settingsTimer.current);
     settingsTimer.current = setTimeout(() => saveSettings(settings), 1000);
     return () => clearTimeout(settingsTimer.current);
-  }, [settings, synced, currentUser]); // Added currentUser here
+  }, [settings, synced, currentUser]);
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
     clearTimeout(plansTimer.current);
     plansTimer.current = setTimeout(() => savePlans(plans), 1000);
     return () => clearTimeout(plansTimer.current);
-  }, [plans, synced, currentUser]); // Added currentUser here
+  }, [plans, synced, currentUser]);
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
     clearTimeout(staffTimer.current);
     staffTimer.current = setTimeout(() => saveStaff(staff.filter(s => !s.id.startsWith("DEV"))), 1000);
     return () => clearTimeout(staffTimer.current);
-  }, [staff, synced, currentUser]); // Added currentUser here
-
+  }, [staff, synced, currentUser]);
 
   return { syncing, synced, syncError };
 }
@@ -1849,16 +1889,12 @@ export default function App() {
 
   const [currentUser, setCurrentUser] = useState(null);
   const [screen, setScreen]           = useState("dashboard");
-  // const [members, setMembers]         = useState([]);
- // const [plans, setPlans]             = useState([]);
-  const [settings, setSettings]       = useState(DEFAULT_SETTINGS);
-//  const [staff, setStaff]             = useState([]);
+  const [members, setMembers]         = useState(() => DEFAULT_MEMBERS);
+  const [plans, setPlans]             = useState(() => DEFAULT_PLANS);
+  const [settings, setSettings]       = useState(() => DEFAULT_SETTINGS);
+  const [staff, setStaff]             = useState(() => DEFAULT_STAFF);
   const [auditLog, setAuditLog]       = useState([]);
   const [loading, setLoading]         = useState(!!supabase);
-
-  const [members, setMembers]         = useState(() => DEFAULT_MEMBERS);
-const [plans, setPlans]             = useState(() => DEFAULT_PLANS);
-const [staff, setStaff]             = useState(() => DEFAULT_STAFF);
 
 
   // Supabase sync
