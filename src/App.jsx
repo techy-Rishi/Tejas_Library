@@ -1661,10 +1661,11 @@ const BottomNav = ({ screen, onNav, perms }) => {
   );
 };
 
+
 // ─────────────────────────────────────────────────────────────────────────────
-// SUPABASE SYNC HOOK (CASE-INSENSITIVE RESOLUTION PIPELINE)
+// SUPABASE SYNC HOOK (FIXED FOR CROSS-ACCOUNT CASE-INSENSITIVE RESOLUTION)
 // ─────────────────────────────────────────────────────────────────────────────
-function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading, currentUser) {
+function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading) {
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced]   = useState(false);
   const [syncError, setSyncError] = useState(null);
@@ -1683,15 +1684,21 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
           supabase.from("settings").select("*").eq("id", 1).single(),
           supabase.from("staff").select("*"),
         ]);
-        
+
+        // FIX: Mapping lowercase fields from Postgres to camelCase state safely
         if (mRes.data && mRes.data.length > 0) {
-          setMembers(mRes.data.map(r => ({ 
-            ...r, 
-            planId: r.planid || r.planId,
-            seatNo: r.seatno !== undefined ? r.seatno : r.seatNo,
-            firstJoined: r.firstjoined || r.firstJoined,
-            manualInactive: r.manualinactive !== undefined ? r.manualinactive : r.manualInactive,
-            renewals: r.renewals || [] 
+          setMembers(mRes.data.map(m => ({
+            id: m.id,
+            name: m.name,
+            phone: m.phone,
+            address: m.address,
+            planId: m.planid || m.planId,
+            seatNo: m.seatno !== undefined ? m.seatno : m.seatNo,
+            firstJoined: m.firstjoined || m.firstJoined,
+            expiry: m.expiry,
+            paid: m.paid,
+            manualInactive: m.manualinactive !== undefined ? m.manualinactive : m.manualInactive,
+            renewals: m.renewals || []
           })));
         } else {
           setMembers(DEFAULT_MEMBERS);
@@ -1699,27 +1706,24 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
 
         if (pRes.data && pRes.data.length > 0) setPlans(pRes.data);
         else setPlans(DEFAULT_PLANS);
-        
+
+        // FIX: Mapping lowercase preferences safely to camelCase state
         if (sRes.data) {
-          setSettings({ 
-            libraryName: sRes.data.libraryname || sRes.data.libraryName || DEFAULT_SETTINGS.libraryName, 
-            totalSeats: sRes.data.totalseats || sRes.data.totalSeats || DEFAULT_SETTINGS.totalSeats, 
-            defaultFee: sRes.data.defaultfee || sRes.data.defaultFee || DEFAULT_SETTINGS.defaultFee, 
-            address: sRes.data.address || DEFAULT_SETTINGS.address, 
-            timing: sRes.data.timing || DEFAULT_SETTINGS.timing 
+          setSettings({
+            libraryName: sRes.data.libraryname || sRes.data.libraryName || DEFAULT_SETTINGS.libraryName,
+            totalSeats: sRes.data.totalseats || sRes.data.totalSeats || DEFAULT_SETTINGS.totalSeats,
+            defaultFee: sRes.data.defaultfee || sRes.data.defaultFee || DEFAULT_SETTINGS.defaultFee,
+            address: sRes.data.address || DEFAULT_SETTINGS.address,
+            timing: sRes.data.timing || DEFAULT_SETTINGS.timing
           });
         }
-        
+
         if (stRes.data && stRes.data.length > 0) {
           setStaff(stRes.data.map(s => ({ ...s, active: s.active === true || s.active === "true" || s.active === 1 })));
         } else {
           setStaff(DEFAULT_STAFF);
         }
-
-        if (mRes.error) console.error("members:", mRes.error.message);
-        if (pRes.error) console.error("plans:", pRes.error.message);
-        if (sRes.error) console.error("settings:", sRes.error.message);
-        if (stRes.error) console.error("staff:", stRes.error.message);
+        
         setSynced(true);
       } catch(e) {
         setSyncError("Supabase load failed: " + e.message);
@@ -1729,30 +1733,30 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
       }
     };
     load();
-  }, [currentUser]);
+  }, []);
 
-  // ── SAVE FUNCTIONS ──────────────────────────────────────────────────────────
+  // ─── SAVE FUNCTIONS (FIXED TO EXPLICITLY WRITE TO LOWERCASE POSTGRES COLUMNS) ───
   const saveMembers = async (data) => {
     if (!supabase || !data.length) return;
     const { error } = await supabase.from("members").upsert(
-      data.map(m => ({ 
+      data.map(m => ({
         id: m.id,
         name: m.name,
         phone: m.phone,
         address: m.address,
-        planid: m.planId,
-        seatno: m.seatNo,
-        firstjoined: m.firstJoined,
+        planid: m.planId || m.planid,
+        seatno: m.seatNo !== undefined ? m.seatNo : m.seatno,
+        firstjoined: m.firstJoined || m.firstjoined,
         expiry: m.expiry,
         paid: m.paid,
-        manualinactive: m.manualInactive,
+        manualinactive: m.manualInactive !== undefined ? m.manualInactive : m.manualinactive,
         renewals: m.renewals,
-        updated_at: new Date().toISOString() 
+        updated_at: new Date().toISOString()
       })),
       { onConflict: "id" }
     );
     if (error) console.error("Members save error:", error.message);
-    else console.log("Members saved:", data.length);
+    else console.log("Members saved successfully:", data.length);
   };
 
   const saveSettings = async (data) => {
@@ -1766,6 +1770,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
       timing: data.timing
     });
     if (error) console.error("Settings save error:", error.message);
+    else console.log("Settings updated successfully upstream.");
   };
 
   const savePlans = async (data) => {
@@ -1780,7 +1785,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     if (error) console.error("Staff save error:", error.message);
   };
 
-  // ── AUTO SAVE (debounced) ─────────────────────────────────────────────────
+  // ─── AUTO SAVE DEBOUNCED TRIGGERS ──────────────────────────────────────────
   const membersTimer  = useRef(null);
   const settingsTimer = useRef(null);
   const plansTimer    = useRef(null);
