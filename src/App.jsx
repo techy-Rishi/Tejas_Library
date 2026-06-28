@@ -1936,25 +1936,29 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
 
   const saveMembers = useCallback(async (data) => {
     if (!supabase) return;
-    if (data.length > 0) {
-      const rows = data.map(m => ({
-        id: m.id,
-        name: m.name,
-        phone: m.phone,
-        address: m.address || "",
-        planid: m.planId,
-        seatno: normalizeSeat(m.seatNo),
-        firstjoined: m.firstJoined,
-        expiry: m.expiry,
-        paid: !!m.paid,
-        manualinactive: !!m.manualInactive,
-        renewals: m.renewals || [],
-        updated_at: new Date().toISOString()
-      }));
-      const { error } = await supabase.from("members").upsert(rows, { onConflict: "id" });
-      if (error) console.error("Members upsert error:", error.message);
+    // Safety guard: never wipe all members. If local state is empty due to a
+    // logout race or transient reset, skip to protect real DB data.
+    if (data.length === 0) {
+      console.warn("saveMembers called with empty array — skipping to prevent data wipe.");
+      return;
     }
-    // BUGFIX: Delete rows that no longer exist in local state
+    const rows = data.map(m => ({
+      id: m.id,
+      name: m.name,
+      phone: m.phone,
+      address: m.address || "",
+      planid: m.planId,
+      seatno: normalizeSeat(m.seatNo),
+      firstjoined: m.firstJoined,
+      expiry: m.expiry,
+      paid: !!m.paid,
+      manualinactive: !!m.manualInactive,
+      renewals: m.renewals || [],
+      updated_at: new Date().toISOString()
+    }));
+    const { error } = await supabase.from("members").upsert(rows, { onConflict: "id" });
+    if (error) console.error("Members upsert error:", error.message);
+    // Delete rows that no longer exist in local state
     const { data: dbRows, error: fetchErr } = await supabase.from("members").select("id");
     if (!fetchErr && dbRows) {
       const localIds = new Set(data.map(m => m.id));
@@ -1981,11 +1985,11 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
 
   const savePlans = useCallback(async (data) => {
     if (!supabase) return;
-    // BUGFIX: upsert existing plans first, then delete removed ones
-    if (data.length > 0) {
-      const { error } = await supabase.from("plans").upsert(data, { onConflict: "id" });
-      if (error) { console.error("Plans upsert error:", error.message); return; }
-    }
+    // Safety guard: never wipe all plans. If local state is empty (e.g. due to
+    // a race), skip entirely to avoid deleting real data from DB.
+    if (data.length === 0) return;
+    const { error } = await supabase.from("plans").upsert(data, { onConflict: "id" });
+    if (error) { console.error("Plans upsert error:", error.message); return; }
     // Delete plans from DB that are no longer in local state
     const { data: dbPlans, error: fetchErr } = await supabase.from("plans").select("id");
     if (!fetchErr && dbPlans) {
@@ -2004,6 +2008,18 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
     if (filtered.length > 0) {
       const { error } = await supabase.from("staff").upsert(filtered, { onConflict: "id" });
       if (error) console.error("Staff save error:", error.message);
+    }
+    // BUG FIX: Delete staff rows from DB that no longer exist in local state.
+    // Without this, deleting a staff member in UI would NOT remove them from DB,
+    // so they'd reappear on next login and could still log in.
+    const { data: dbStaff, error: fetchErr } = await supabase.from("staff").select("id");
+    if (!fetchErr && dbStaff) {
+      const localIds = new Set(filtered.map(s => s.id));
+      const toDelete = dbStaff.map(s => s.id).filter(id => !localIds.has(id));
+      if (toDelete.length > 0) {
+        const { error: delErr } = await supabase.from("staff").delete().in("id", toDelete);
+        if (delErr) console.error("Staff delete error:", delErr.message);
+      }
     }
   }, []);
 
@@ -2166,18 +2182,20 @@ export default function App() {
             <DarkToggle/>
             {/* Logout */}
             <button onClick={()=>{
-              // Set currentUser null FIRST — this triggers the useSupabaseSync
-              // load effect which immediately kills all auto-save timers, preventing
-              // the debounced saves from firing with stale/reset data.
+              // BUG FIX: Logout sequence — order matters critically.
+              // 1. setCurrentUser(null) FIRST — useSupabaseSync's load effect
+              //    fires, kills all timers, and sets synced=false atomically.
+              //    This blocks ALL auto-save effects before any state is cleared.
               setCurrentUser(null);
               setScreen("dashboard");
               setLoading(false);
-              // Clear state to empty (not DEFAULT_*) so debounced saves that
-              // haven't been killed yet don't write demo data back to the DB.
-              setMembers([]);
-              setPlans([]);
+              // 2. Only clear local UI state AFTER currentUser is null.
+              //    Auto-save effects guard on `currentUser`, so these setters
+              //    will NOT trigger a DB write — the guard is already down.
+              //    DO NOT reset members/plans here — it was causing the logout
+              //    race that wiped DB data when synced was still true.
+              //    Instead, data is cleared on next login's fresh load from Supabase.
               setAuditLog([]);
-              // Keep settings/staff as-is; they're non-destructive and tiny.
             }}
               style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:RADIUS.md, padding:"6px 10px", display:"flex", alignItems:"center", gap:5, cursor:"pointer", fontSize:12, color:C.sub, fontFamily:FONT, fontWeight:600 }}>
               <Icon name="logout" size={13} color={C.sub}/>Logout
