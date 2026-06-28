@@ -1662,12 +1662,13 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
           supabase.from("members").select("*").order("created_at", { ascending:true }),
           supabase.from("plans").select("*").order("created_at", { ascending:true }),
           supabase.from("settings").select("*").eq("id", 1).single(),
-          supabase.from("staff").select("*").order("created_at", { ascending:true }),
+          supabase.from("staff").select("*"),
         ]);
         if (mRes.data  && mRes.data.length>0)  setMembers(mRes.data.map(r=>({ ...r, renewals:r.renewals||[] })));
         if (pRes.data  && pRes.data.length>0)  setPlans(pRes.data);
-        if (sRes.data)                          setSettings(sRes.data);
-        if (stRes.data && stRes.data.length>0)  setStaff(stRes.data);
+        if (sRes.data)                          setSettings({...DEFAULT_SETTINGS, ...sRes.data});
+        if (stRes.data && stRes.data.length>0) setStaff(stRes.data.map(s=>({...s, active:s.active===true||s.active==="true"||s.active===1})));
+        else setStaff(DEFAULT_STAFF);
         setSynced(true);
       } catch(e) {
         setSyncError("Supabase load failed: "+e.message);
