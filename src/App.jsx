@@ -1664,7 +1664,7 @@ const BottomNav = ({ screen, onNav, perms }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SUPABASE SYNC HOOK (CASE-INSENSITIVE RESOLUTION PIPELINE)
 // ─────────────────────────────────────────────────────────────────────────────
-function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading) {
+function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading, currentUser) {
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced]   = useState(false);
   const [syncError, setSyncError] = useState(null);
@@ -1729,7 +1729,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
       }
     };
     load();
-  }, []);
+  }, [currentUser]);
 
   // ── SAVE FUNCTIONS ──────────────────────────────────────────────────────────
   const saveMembers = async (data) => {
@@ -1896,7 +1896,7 @@ export default function App() {
   const [loading, setLoading]         = useState(!!supabase);
 
   // Supabase sync
-  const { syncing, synced, syncError } = useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading);
+  const { syncing, synced, syncError } = useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading, currentUser);
 
   const addAudit = (user, action) => {
     setAuditLog(prev=>[...prev,{ by:user?.name||"System", action, at:fmtDT() }]);
