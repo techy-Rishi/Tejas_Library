@@ -1674,6 +1674,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
   // Load from Supabase on mount
   useEffect(() => {
     if (!supabase || loaded.current) return;
+    loaded.current = false;
     loaded.current = true;
     const load = async () => {
       setSyncing(true);
