@@ -1665,7 +1665,7 @@ const BottomNav = ({ screen, onNav, perms }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SUPABASE SYNC HOOK (FIXED FOR CROSS-ACCOUNT CASE-INSENSITIVE RESOLUTION)
 // ─────────────────────────────────────────────────────────────────────────────
-function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading) {
+function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading, currentUser) {
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced]   = useState(false);
   const [syncError, setSyncError] = useState(null);
@@ -1733,7 +1733,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
       }
     };
     load();
-  }, []);
+  }, [currentUser]);
 
   // ─── SAVE FUNCTIONS (FIXED TO EXPLICITLY WRITE TO LOWERCASE POSTGRES COLUMNS) ───
   const saveMembers = async (data) => {
