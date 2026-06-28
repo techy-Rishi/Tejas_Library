@@ -1820,6 +1820,10 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
   }, [staff, synced, currentUser]); // Added currentUser here
 
 
+  return { syncing, synced, syncError };
+}
+
+
 
 
 
