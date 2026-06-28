@@ -1849,12 +1849,17 @@ export default function App() {
 
   const [currentUser, setCurrentUser] = useState(null);
   const [screen, setScreen]           = useState("dashboard");
-  const [members, setMembers]         = useState([]);
-  const [plans, setPlans]             = useState([]);
+  // const [members, setMembers]         = useState([]);
+ // const [plans, setPlans]             = useState([]);
   const [settings, setSettings]       = useState(DEFAULT_SETTINGS);
-  const [staff, setStaff]             = useState([]);
+//  const [staff, setStaff]             = useState([]);
   const [auditLog, setAuditLog]       = useState([]);
   const [loading, setLoading]         = useState(!!supabase);
+
+  const [members, setMembers]         = useState(() => DEFAULT_MEMBERS);
+const [plans, setPlans]             = useState(() => DEFAULT_PLANS);
+const [staff, setStaff]             = useState(() => DEFAULT_STAFF);
+
 
   // Supabase sync
   const { syncing, synced, syncError } = useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading, currentUser);
