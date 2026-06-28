@@ -1823,11 +1823,10 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
 
   // ─── LOAD FROM SUPABASE — re-runs on every currentUser change ───────────────
   useEffect(() => {
-    // ROOT BUG FIX: If there's no logged-in user (initial app load or after logout),
-    // we must release the loading screen immediately so the login form is visible.
-    // Previously this returned early without calling setLoading(false), permanently
-    // trapping the app on the loading spinner.
     if (!supabase || !currentUser) {
+      // Kill all pending auto-save timers immediately on logout
+      // so no debounced write fires after the user has left.
+      killAllTimers();
       setLoading(false);
       return;
     }
@@ -1847,6 +1846,7 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
 
     const load = async () => {
       setSyncing(true);
+      setLoading(true); // show spinner while fetching after login
       try {
         const [mRes, pRes, sRes, stRes, aRes] = await Promise.all([
           supabase.from("members").select("*"),
@@ -1859,49 +1859,55 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
 
         if (cancelled) return; // effect was cleaned up before fetch completed
 
-        // FIX 12: Empty DB = empty arrays, not fake demo data.
-        // DEFAULT_* constants are only for the no-Supabase (offline) mode.
-        if (mRes.data && mRes.data.length > 0) {
+        // Members — Supabase always returns lowercase column names
+        if (mRes.error) console.error("Members load error:", mRes.error.message);
+        else if (mRes.data && mRes.data.length > 0) {
           setMembers(mRes.data.map(m => ({
             id: m.id,
-            name: m.name,
-            phone: m.phone,
-            address: m.address,
-            planId: m.planid || m.planId,
-            seatNo: normalizeSeat(m.seatno !== undefined ? m.seatno : m.seatNo),
-            firstJoined: m.firstjoined || m.firstJoined,
-            expiry: m.expiry,
-            paid: m.paid,
-            manualInactive: m.manualinactive !== undefined ? m.manualinactive : m.manualInactive,
-            renewals: m.renewals || []
+            name: m.name || "",
+            phone: m.phone || "",
+            address: m.address || "",
+            planId: m.planid || "",
+            seatNo: normalizeSeat(m.seatno),
+            firstJoined: m.firstjoined || m.expiry || todayStr(),
+            expiry: m.expiry || todayStr(),
+            paid: !!m.paid,
+            manualInactive: !!m.manualinactive,
+            renewals: Array.isArray(m.renewals) ? m.renewals : []
           })));
         } else {
-          setMembers([]); // real empty DB → empty list, not fake demo members
+          setMembers([]);
         }
 
+        // Plans
+        if (pRes.error) console.error("Plans load error:", pRes.error.message);
         if (pRes.data && pRes.data.length > 0) setPlans(pRes.data);
-        else setPlans(DEFAULT_PLANS); // plans have sensible defaults (Daily/Monthly/etc)
+        else setPlans(DEFAULT_PLANS);
 
-        // FIX: Mapping lowercase preferences safely to camelCase state
-        if (sRes.data) {
+        // Settings — .single() errors if row doesn't exist yet
+        if (!sRes.error && sRes.data) {
           setSettings({
-            libraryName: sRes.data.libraryname || sRes.data.libraryName || DEFAULT_SETTINGS.libraryName,
-            totalSeats: sRes.data.totalseats || sRes.data.totalSeats || DEFAULT_SETTINGS.totalSeats,
-            defaultFee: sRes.data.defaultfee || sRes.data.defaultFee || DEFAULT_SETTINGS.defaultFee,
-            address: sRes.data.address || DEFAULT_SETTINGS.address,
-            timing: sRes.data.timing || DEFAULT_SETTINGS.timing
+            libraryName: sRes.data.libraryname || DEFAULT_SETTINGS.libraryName,
+            totalSeats:  Number(sRes.data.totalseats)  || DEFAULT_SETTINGS.totalSeats,
+            defaultFee:  Number(sRes.data.defaultfee)  || DEFAULT_SETTINGS.defaultFee,
+            address:     sRes.data.address  || DEFAULT_SETTINGS.address,
+            timing:      sRes.data.timing   || DEFAULT_SETTINGS.timing,
           });
         }
+        // else keep DEFAULT_SETTINGS already in state
 
+        // Staff
+        if (stRes.error) console.error("Staff load error:", stRes.error.message);
         if (stRes.data && stRes.data.length > 0) {
           setStaff(stRes.data.map(s => ({ ...s, active: s.active === true || s.active === "true" || s.active === 1 })));
         } else {
-          setStaff([]); // real empty DB → no staff seeded automatically
+          setStaff([]);
         }
 
-        // FIX 10: restore persisted audit log
+        // Audit log
+        if (aRes.error) console.error("Audit load error:", aRes.error.message);
         if (aRes.data && aRes.data.length > 0) {
-          setAuditLog(aRes.data.map(r => ({ by: r.by, action: r.action, at: r.at })));
+          setAuditLog(aRes.data.map(r => ({ by: r.by || "?", action: r.action || "", at: r.at || "" })));
         }
 
         // ── STEP 3: Only unlock auto-save AFTER all fresh data is committed ──
@@ -1926,40 +1932,37 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
     };
   }, [currentUser, killAllTimers]);
 
-  // ─── SAVE FUNCTIONS — useCallback so auto-save effects never close over stale data ───
+  // ─── SAVE FUNCTIONS ──────────────────────────────────────────────────────────
+
   const saveMembers = useCallback(async (data) => {
     if (!supabase) return;
-    // BUG FIX 18: Don't bail on empty array — if all members are deleted we need
-    // to remove them from DB. Handle deletions by tracking which IDs exist.
-    // For now, upsert what we have (handles adds/edits). Deletion sync would
-    // require a separate DELETE call; upsert alone won't remove deleted members.
     if (data.length > 0) {
-      const { error } = await supabase.from("members").upsert(
-        data.map(m => ({
-          id: m.id,
-          name: m.name,
-          phone: m.phone,
-          address: m.address,
-          planid: m.planId || m.planid,
-          seatno: normalizeSeat(m.seatNo !== undefined ? m.seatNo : m.seatno),
-          firstjoined: m.firstJoined || m.firstjoined,
-          expiry: m.expiry,
-          paid: m.paid,
-          manualinactive: m.manualInactive !== undefined ? m.manualInactive : m.manualinactive,
-          renewals: m.renewals,
-          updated_at: new Date().toISOString()
-        })),
-        { onConflict: "id" }
-      );
-      if (error) console.error("Members save error:", error.message);
-      else console.log("Members saved successfully:", data.length);
+      const rows = data.map(m => ({
+        id: m.id,
+        name: m.name,
+        phone: m.phone,
+        address: m.address || "",
+        planid: m.planId,
+        seatno: normalizeSeat(m.seatNo),
+        firstjoined: m.firstJoined,
+        expiry: m.expiry,
+        paid: !!m.paid,
+        manualinactive: !!m.manualInactive,
+        renewals: m.renewals || [],
+        updated_at: new Date().toISOString()
+      }));
+      const { error } = await supabase.from("members").upsert(rows, { onConflict: "id" });
+      if (error) console.error("Members upsert error:", error.message);
     }
-    // Sync deletions: remove from DB any IDs not in current data
-    if (data.length === 0) {
-      // If all members deleted, clear the table (only in a real production app
-      // would you add a safety prompt; here we trust the caller).
-      const { error } = await supabase.from("members").delete().neq("id", "NEVER_MATCH");
-      if (error) console.error("Members clear error:", error.message);
+    // BUGFIX: Delete rows that no longer exist in local state
+    const { data: dbRows, error: fetchErr } = await supabase.from("members").select("id");
+    if (!fetchErr && dbRows) {
+      const localIds = new Set(data.map(m => m.id));
+      const toDelete = dbRows.map(r => r.id).filter(id => !localIds.has(id));
+      if (toDelete.length > 0) {
+        const { error: delErr } = await supabase.from("members").delete().in("id", toDelete);
+        if (delErr) console.error("Members delete error:", delErr.message);
+      }
     }
   }, []);
 
@@ -1974,69 +1977,84 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
       timing: data.timing
     }, { onConflict: "id" });
     if (error) console.error("Settings save error:", error.message);
-    else console.log("Settings updated successfully upstream.");
   }, []);
 
   const savePlans = useCallback(async (data) => {
-    if (!supabase || !data.length) return;
-    const { error } = await supabase.from("plans").upsert(data, { onConflict: "id" });
-    if (error) console.error("Plans save error:", error.message);
+    if (!supabase) return;
+    // BUGFIX: upsert existing plans first, then delete removed ones
+    if (data.length > 0) {
+      const { error } = await supabase.from("plans").upsert(data, { onConflict: "id" });
+      if (error) { console.error("Plans upsert error:", error.message); return; }
+    }
+    // Delete plans from DB that are no longer in local state
+    const { data: dbPlans, error: fetchErr } = await supabase.from("plans").select("id");
+    if (!fetchErr && dbPlans) {
+      const localIds = new Set(data.map(p => p.id));
+      const toDelete = dbPlans.map(p => p.id).filter(id => !localIds.has(id));
+      if (toDelete.length > 0) {
+        const { error: delErr } = await supabase.from("plans").delete().in("id", toDelete);
+        if (delErr) console.error("Plans delete error:", delErr.message);
+      }
+    }
   }, []);
 
   const saveStaff = useCallback(async (data) => {
-    if (!supabase || !data.length) return;
-    const { error } = await supabase.from("staff").upsert(data, { onConflict: "id" });
-    if (error) console.error("Staff save error:", error.message);
+    if (!supabase) return;
+    const filtered = data.filter(s => !s.id.startsWith("DEV"));
+    if (filtered.length > 0) {
+      const { error } = await supabase.from("staff").upsert(filtered, { onConflict: "id" });
+      if (error) console.error("Staff save error:", error.message);
+    }
   }, []);
 
-  // FIX 10: persist audit log — insert only new entries (upsert by at+by unique key)
+  // BUGFIX: Audit log — use insert with ignoreDuplicates instead of upsert with
+  // a constraint that may not exist in the DB schema. Also save immediately,
+  // not debounced, so logout doesn't cancel the timer before it fires.
   const saveAuditLog = useCallback(async (data) => {
     if (!supabase || !data.length) return;
     const rows = data.map(r => ({ by: r.by, action: r.action, at: r.at }));
-    const { error } = await supabase.from("audit_log").upsert(rows, { onConflict: "at,by" });
-    if (error) console.error("Audit log save error:", error.message);
+    const { error } = await supabase.from("audit_log").upsert(rows, { onConflict: "at,by", ignoreDuplicates: true });
+    if (error) {
+      // Fallback: plain insert if the unique constraint doesn't exist
+      const { error: e2 } = await supabase.from("audit_log").insert(rows);
+      if (e2) console.error("Audit log save error:", e2.message);
+    }
   }, []);
 
-  // ─── AUTO-SAVE EFFECTS — gated behind synced AND currentUser ─────────────
-  // Because synced is reset to false at the very start of the load effect above,
-  // none of these can fire during the user-switch window. They only activate once
-  // fresh data has been fully committed and setSynced(true) has been called.
-  // saveX functions are useCallback-stable, so adding them here has zero cost.
+  // ─── AUTO-SAVE EFFECTS ────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
     clearTimeout(membersTimer.current);
-    membersTimer.current = setTimeout(() => saveMembers(members), 1500);
+    membersTimer.current = setTimeout(() => saveMembers(members), 800);
     return () => clearTimeout(membersTimer.current);
   }, [members, synced, currentUser, saveMembers]);
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
     clearTimeout(settingsTimer.current);
-    settingsTimer.current = setTimeout(() => saveSettings(settings), 1000);
+    settingsTimer.current = setTimeout(() => saveSettings(settings), 800);
     return () => clearTimeout(settingsTimer.current);
   }, [settings, synced, currentUser, saveSettings]);
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
-    clearTimeout(plansTimer.current);
-    plansTimer.current = setTimeout(() => savePlans(plans), 1000);
-    return () => clearTimeout(plansTimer.current);
+    // BUGFIX: Save plans immediately (no debounce) so a delete+logout doesn't lose data
+    savePlans(plans);
   }, [plans, synced, currentUser, savePlans]);
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
     clearTimeout(staffTimer.current);
-    staffTimer.current = setTimeout(() => saveStaff(staff.filter(s => !s.id.startsWith("DEV"))), 1000);
+    staffTimer.current = setTimeout(() => saveStaff(staff), 800);
     return () => clearTimeout(staffTimer.current);
   }, [staff, synced, currentUser, saveStaff]);
 
-  // FIX 10: auto-save audit log on every new entry
+  // BUGFIX: Audit saves immediately — debounce meant logout cancelled the timer
+  // before the save fired, so the last action was always lost.
   useEffect(() => {
     if (!supabase || !synced || !currentUser || !auditLog.length) return;
-    clearTimeout(auditTimer.current);
-    auditTimer.current = setTimeout(() => saveAuditLog(auditLog), 2000);
-    return () => clearTimeout(auditTimer.current);
+    saveAuditLog(auditLog);
   }, [auditLog, synced, currentUser, saveAuditLog]);
 
   return { syncing, synced, syncError };
@@ -2148,18 +2166,18 @@ export default function App() {
             <DarkToggle/>
             {/* Logout */}
             <button onClick={()=>{
+              // Set currentUser null FIRST — this triggers the useSupabaseSync
+              // load effect which immediately kills all auto-save timers, preventing
+              // the debounced saves from firing with stale/reset data.
               setCurrentUser(null);
               setScreen("dashboard");
-              // FIX 6: Clear all data on logout — previous user's data must not
-              // remain in memory while the next user is on the login screen.
-              setMembers(DEFAULT_MEMBERS);
-              setPlans(DEFAULT_PLANS);
-              setSettings(DEFAULT_SETTINGS);
-              setStaff(DEFAULT_STAFF);
-              setAuditLog([]);
-              // BUG FIX: Reset loading to false on logout so the loading screen
-              // never accidentally shows when the next user hits the login form.
               setLoading(false);
+              // Clear state to empty (not DEFAULT_*) so debounced saves that
+              // haven't been killed yet don't write demo data back to the DB.
+              setMembers([]);
+              setPlans([]);
+              setAuditLog([]);
+              // Keep settings/staff as-is; they're non-destructive and tiny.
             }}
               style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:RADIUS.md, padding:"6px 10px", display:"flex", alignItems:"center", gap:5, cursor:"pointer", fontSize:12, color:C.sub, fontFamily:FONT, fontWeight:600 }}>
               <Icon name="logout" size={13} color={C.sub}/>Logout
