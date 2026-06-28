@@ -1821,54 +1821,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
 
 
 
-// ─── SAVE FUNCTIONS ─────────────────────────────────────────────────────────
-const saveMembers = async (data) => {
-  if (!supabase || !data.length) return;
-  const { error } = await supabase.from("members").upsert(
-    data.map(m => ({ 
-      id: m.id,
-      name: m.name,
-      phone: m.phone,
-      address: m.address,
-      planid: m.planId,
-      seatno: m.seatNo,
-      firstjoined: m.firstJoined,
-      expiry: m.expiry,
-      paid: m.paid,
-      manualinactive: m.manualInactive,
-      renewals: m.renewals,
-      updated_at: new Date().toISOString() 
-    })),
-    { onConflict: "id" }
-  );
-  if (error) console.error("Members save error:", error.message);
-  else console.log("Members saved:", data.length);
-};
 
-const saveSettings = async (data) => {
-  if (!supabase) return;
-  const { error } = await supabase.from("settings").upsert({ 
-    id: 1, 
-    libraryname: data.libraryName,
-    totalseats: data.totalSeats,
-    defaultfee: data.defaultFee,
-    address: data.address,
-    timing: data.timing
-  });
-  if (error) console.error("Settings save error:", error.message);
-};
-
-const savePlans = async (data) => {
-  if (!supabase || !data.length) return;
-  const { error } = await supabase.from("plans").upsert(data, { onConflict: "id" });
-  if (error) console.error("Plans save error:", error.message);
-};
-
-const saveStaff = async (data) => {
-  if (!supabase || !data.length) return;
-  const { error } = await supabase.from("staff").upsert(data, { onConflict: "id" });
-  if (error) console.error("Staff save error:", error.message);
-};
 
 
 
