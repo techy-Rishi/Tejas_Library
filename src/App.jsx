@@ -1643,7 +1643,7 @@ const BottomNav = ({ screen, onNav, perms }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SUPABASE SYNC HOOK (FIXED DATA HYDRATION LAYER)
+// SUPABASE SYNC HOOK (CASE-INSENSITIVE RESOLUTION PIPELINE)
 // ─────────────────────────────────────────────────────────────────────────────
 function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading) {
   const [syncing, setSyncing] = useState(false);
@@ -1664,34 +1664,33 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
           supabase.from("settings").select("*").eq("id", 1).single(),
           supabase.from("staff").select("*"),
         ]);
-
-        // FIX: PostgreSQL lowercase field mapping for Members
+        
         if (mRes.data && mRes.data.length > 0) {
-          setMembers(mRes.data.map(m => ({
-            ...m,
-            planId: m.planid || m.planId,
-            seatNo: m.seatno !== undefined ? m.seatno : m.seatNo,
-            firstJoined: m.firstjoined || m.firstJoined,
-            manualInactive: m.manualinactive !== undefined ? m.manualinactive : m.manualInactive,
-            renewals: m.renewals || []
+          setMembers(mRes.data.map(r => ({ 
+            ...r, 
+            planId: r.planid || r.planId,
+            seatNo: r.seatno !== undefined ? r.seatno : r.seatNo,
+            firstJoined: r.firstjoined || r.firstJoined,
+            manualInactive: r.manualinactive !== undefined ? r.manualinactive : r.manualInactive,
+            renewals: r.renewals || [] 
           })));
+        } else {
+          setMembers(DEFAULT_MEMBERS);
         }
 
-        if (pRes.data && pRes.data.length > 0) {
-          setPlans(pRes.data);
-        }
-
-        // FIX: PostgreSQL lowercase field mapping for Settings
+        if (pRes.data && pRes.data.length > 0) setPlans(pRes.data);
+        else setPlans(DEFAULT_PLANS);
+        
         if (sRes.data) {
-          setSettings({
-            libraryName: sRes.data.libraryname || sRes.data.libraryName || DEFAULT_SETTINGS.libraryName,
-            totalSeats: sRes.data.totalseats || sRes.data.totalSeats || DEFAULT_SETTINGS.totalSeats,
-            defaultFee: sRes.data.defaultfee || sRes.data.defaultFee || DEFAULT_SETTINGS.defaultFee,
-            address: sRes.data.address || DEFAULT_SETTINGS.address,
-            timing: sRes.data.timing || DEFAULT_SETTINGS.timing
+          setSettings({ 
+            libraryName: sRes.data.libraryname || sRes.data.libraryName || DEFAULT_SETTINGS.libraryName, 
+            totalSeats: sRes.data.totalseats || sRes.data.totalSeats || DEFAULT_SETTINGS.totalSeats, 
+            defaultFee: sRes.data.defaultfee || sRes.data.defaultFee || DEFAULT_SETTINGS.defaultFee, 
+            address: sRes.data.address || DEFAULT_SETTINGS.address, 
+            timing: sRes.data.timing || DEFAULT_SETTINGS.timing 
           });
         }
-
+        
         if (stRes.data && stRes.data.length > 0) {
           setStaff(stRes.data.map(s => ({ ...s, active: s.active === true || s.active === "true" || s.active === 1 })));
         } else {
@@ -1702,7 +1701,6 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
         if (pRes.error) console.error("plans:", pRes.error.message);
         if (sRes.error) console.error("settings:", sRes.error.message);
         if (stRes.error) console.error("staff:", stRes.error.message);
-        
         setSynced(true);
       } catch(e) {
         setSyncError("Supabase load failed: " + e.message);
@@ -1714,8 +1712,92 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     load();
   }, []);
 
+  // ── SAVE FUNCTIONS ──────────────────────────────────────────────────────────
+  const saveMembers = async (data) => {
+    if (!supabase || !data.length) return;
+    const { error } = await supabase.from("members").upsert(
+      data.map(m => ({ 
+        id: m.id,
+        name: m.name,
+        phone: m.phone,
+        address: m.address,
+        planid: m.planId,
+        seatno: m.seatNo,
+        firstjoined: m.firstJoined,
+        expiry: m.expiry,
+        paid: m.paid,
+        manualinactive: m.manualInactive,
+        renewals: m.renewals,
+        updated_at: new Date().toISOString() 
+      })),
+      { onConflict: "id" }
+    );
+    if (error) console.error("Members save error:", error.message);
+    else console.log("Members saved:", data.length);
+  };
+
+  const saveSettings = async (data) => {
+    if (!supabase) return;
+    const { error } = await supabase.from("settings").upsert({ 
+      id: 1, 
+      libraryname: data.libraryName,
+      totalseats: data.totalSeats,
+      defaultfee: data.defaultFee,
+      address: data.address,
+      timing: data.timing
+    });
+    if (error) console.error("Settings save error:", error.message);
+  };
+
+  const savePlans = async (data) => {
+    if (!supabase || !data.length) return;
+    const { error } = await supabase.from("plans").upsert(data, { onConflict: "id" });
+    if (error) console.error("Plans save error:", error.message);
+  };
+
+  const saveStaff = async (data) => {
+    if (!supabase || !data.length) return;
+    const { error } = await supabase.from("staff").upsert(data, { onConflict: "id" });
+    if (error) console.error("Staff save error:", error.message);
+  };
+
+  // ── AUTO SAVE (debounced) ─────────────────────────────────────────────────
+  const membersTimer  = useRef(null);
+  const settingsTimer = useRef(null);
+  const plansTimer    = useRef(null);
+  const staffTimer    = useRef(null);
+
+  useEffect(() => {
+    if (!supabase || !synced) return;
+    clearTimeout(membersTimer.current);
+    membersTimer.current = setTimeout(() => saveMembers(members), 1500);
+    return () => clearTimeout(membersTimer.current);
+  }, [members, synced]);
+
+  useEffect(() => {
+    if (!supabase || !synced) return;
+    clearTimeout(settingsTimer.current);
+    settingsTimer.current = setTimeout(() => saveSettings(settings), 1000);
+    return () => clearTimeout(settingsTimer.current);
+  }, [settings, synced]);
+
+  useEffect(() => {
+    if (!supabase || !synced) return;
+    clearTimeout(plansTimer.current);
+    plansTimer.current = setTimeout(() => savePlans(plans), 1000);
+    return () => clearTimeout(plansTimer.current);
+  }, [plans, synced]);
+
+  useEffect(() => {
+    if (!supabase || !synced) return;
+    clearTimeout(staffTimer.current);
+    staffTimer.current = setTimeout(() => saveStaff(staff.filter(s => !s.id.startsWith("DEV"))), 1000);
+    return () => clearTimeout(staffTimer.current);
+  }, [staff, synced]);
+
   return { syncing, synced, syncError };
 }
+
 
 // ─── SAVE FUNCTIONS ─────────────────────────────────────────────────────────
 const saveMembers = async (data) => {
