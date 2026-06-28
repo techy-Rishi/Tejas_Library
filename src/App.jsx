@@ -1669,6 +1669,10 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
         if (sRes.data)                          setSettings({...DEFAULT_SETTINGS, ...sRes.data});
         if (stRes.data && stRes.data.length>0) setStaff(stRes.data.map(s=>({...s, active:s.active===true||s.active==="true"||s.active===1})));
         else setStaff(DEFAULT_STAFF);
+        if (mRes.error) console.error("members:", mRes.error.message);
+        if (pRes.error) console.error("plans:", pRes.error.message);
+        if (sRes.error) console.error("settings:", sRes.error.message);
+        if (stRes.error) console.error("staff:", stRes.error.message);
         setSynced(true);
       } catch(e) {
         setSyncError("Supabase load failed: "+e.message);
@@ -1738,7 +1742,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
   useEffect(() => {
     if (!supabase || !synced) return;
     clearTimeout(staffTimer.current);
-    staffTimer.current = setTimeout(() => saveStaff(staff), 1000);
+    staffTimer.current = setTimeout(() => saveStaff(staff.filter(s => !s.id.startsWith("DEV"))), 1000);
     return () => clearTimeout(staffTimer.current);
   }, [staff, synced]);
 
