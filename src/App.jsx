@@ -3,7 +3,7 @@
 // Features: Dark Mode · Manual Entry · Supabase · Dev Panel · ID Card · PWA
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState, useRef, useCallback, useEffect, createContext, useContext } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, createContext, useContext } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 // ─── SUPABASE CLIENT ─────────────────────────────────────────────────────────
@@ -140,7 +140,10 @@ const timeNow   = () => new Date().toLocaleTimeString("en-IN",{hour:"2-digit",mi
 const fmtDate   = (d) => d ? new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}) : "—";
 const fmtDateSh = (d) => d ? new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short"}) : "—";
 const fmtDT     = () => new Date().toLocaleString("en-IN",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
-const daysLeft  = (e) => Math.ceil((new Date(e) - new Date()) / 86400000);
+const daysLeft  = (e) => {
+  const today = new Date(todayStr()); // midnight, date-only
+  return Math.ceil((new Date(e) - today) / 86400000);
+};
 const addDays   = (b, n) => { const d = new Date(b); d.setDate(d.getDate()+n); return d.toISOString().split("T")[0]; };
 // FIX 3: Collision-proof ID — timestamp suffix (base36) + 3 random chars
 // Gives ~46656 combinations per millisecond; practically zero collision risk.
@@ -577,16 +580,13 @@ const MemberIdCard = ({ member, libName, libAddress, onClose }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const RenewModal = ({ member, plans, onRenew, onClose }) => {
   const [selPlanId, setSelPlanId] = useState(member.planId || plans[0]?.id);
-  const selPlan = plans.find(p => p.id === selPlanId);
-  // FIX BUG 1: amount was initialized as "" even when a plan was pre-selected.
-  // useState initializer now seeds the correct price; useEffect keeps it in sync on plan change.
+  // Initialize amount from the pre-selected plan; update whenever the user picks a different plan.
   const [amount, setAmount] = useState(() => {
-    const initial = plans.find(p => p.id === selPlanId);
+    const initial = plans.find(p => p.id === (member.planId || plans[0]?.id));
     return initial ? String(initial.price) : "";
   });
-  
-  const [note, setNote]           = useState("");
-  const [paid, setPaid]           = useState(true);
+  const [note, setNote] = useState("");
+  const [paid, setPaid] = useState(true);
   const { dark } = useDark();
   const C = makeC(dark);
 
@@ -853,7 +853,7 @@ const SeatsScreen = ({ members, settings }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SCREEN: MEMBERS
 // ─────────────────────────────────────────────────────────────────────────────
-const MembersScreen = ({ members, setMembers, plans, settings, addAudit, currentUser }) => {
+const MembersScreen = ({ members, setMembers, plans, setPlans, settings, addAudit, currentUser }) => {
   const { dark } = useDark();
   const C = makeC(dark);
   const [search, setSearch] = useState("");
@@ -905,7 +905,12 @@ const MembersScreen = ({ members, setMembers, plans, settings, addAudit, current
   const tryClose = () => { if (formDirty) setWarnClose(true); else setModal(false); };
 
   const save = () => {
-    if (!form.name.trim()||!form.phone.trim()) return;
+    if (!form.name.trim()) return;
+    if (!form.phone.trim() || !/^\d{10}$/.test(form.phone.trim())) {
+      // Show inline feedback — for now just return; Field hint already says 10-digit
+      alert("Valid 10-digit phone number required.");
+      return;
+    }
     const plan=plans.find(p=>p.id===form.planId), seatNum=normalizeSeat(form.seatNo);
     if (editing) {
       setMembers(prev => prev.map(m => {
@@ -954,10 +959,14 @@ const MembersScreen = ({ members, setMembers, plans, settings, addAudit, current
   };
 
   const doDelete = id => {
-    const m=members.find(x=>x.id===id);
-    setMembers(prev=>prev.filter(x=>x.id!==id));
+    const m = members.find(x => x.id === id);
+    setMembers(prev => prev.filter(x => x.id !== id));
     addAudit(currentUser, `Member DELETED: ${m?.name} (${id})`);
     setDeleteGuard(null);
+    // Close any open modal that references this member
+    if (viewing?.id === id)  setViewing(null);
+    if (idCardFor?.id === id) setIdCardFor(null);
+    if (renewFor?.id === id)  setRenewFor(null);
   };
 
   return (
@@ -1218,10 +1227,16 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
   const openAddPlan  = () => { setEditPlan(null); setPForm({name:"",days:"",price:""}); setPlanModal(true); };
   const openEditPlan = p  => { setEditPlan(p.id); setPForm({name:p.name,days:String(p.days),price:String(p.price)}); setPlanModal(true); };
   const savePlan = () => {
-    if (!pForm.name||!pForm.days||!pForm.price) return;
-    const data={name:pForm.name,days:Number(pForm.days),price:Number(pForm.price)};
-    if (editPlan) { setPlans(prev=>prev.map(p=>p.id===editPlan?{...p,...data}:p)); addAudit(currentUser,`Plan edited: ${pForm.name}`); }
-    else          { setPlans(prev=>[...prev,{id:"p"+Date.now(),...data}]); addAudit(currentUser,`Plan created: ${pForm.name} ₹${pForm.price}`); }
+    if (!pForm.name.trim() || !pForm.days || !pForm.price) return;
+    const data = { name:pForm.name.trim(), days:Number(pForm.days), price:Number(pForm.price) };
+    if (editPlan) {
+      setPlans(prev => prev.map(p => p.id===editPlan ? {...p,...data} : p));
+      addAudit(currentUser, `Plan edited: ${data.name}`);
+    } else {
+      const newId = "p" + (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID().slice(0,8) : Date.now().toString(36));
+      setPlans(prev => [...prev, { id:newId, ...data }]);
+      addAudit(currentUser, `Plan created: ${data.name} ₹${data.price}`);
+    }
     setPlanModal(false);
   };
   const doDeletePlan = id => {
@@ -1232,9 +1247,17 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
   const openAddStaff  = () => { setEditStaff(null); setSfForm({name:"",email:"",role:"staff",pin:""}); setStaffModal(true); };
   const openEditStaff = sf => { setEditStaff(sf.id); setSfForm({name:sf.name,email:sf.email,role:sf.role,pin:sf.pin}); setStaffModal(true); };
   const saveStaff = () => {
-    if (!sfForm.name||!sfForm.email||!sfForm.pin) return;
-    if (editStaff) { setStaff(prev=>prev.map(sf=>sf.id===editStaff?{...sf,...sfForm}:sf)); addAudit(currentUser,`Staff edited: ${sfForm.name}`); }
-    else           { const ns={id:"S"+Date.now(),...sfForm,active:true,createdAt:todayStr()}; setStaff(prev=>[...prev,ns]); addAudit(currentUser,`Staff added: ${sfForm.name} (${sfForm.role})`); }
+    if (!sfForm.name.trim() || !sfForm.email.trim() || !sfForm.pin) return;
+    if (!/^\d{4}$/.test(sfForm.pin)) { alert("PIN exactly 4 digits hona chahiye."); return; }
+    if (editStaff) {
+      setStaff(prev => prev.map(sf => sf.id===editStaff ? {...sf, ...sfForm, name:sfForm.name.trim(), email:sfForm.email.trim()} : sf));
+      addAudit(currentUser, `Staff edited: ${sfForm.name.trim()}`);
+    } else {
+      const newId = "S" + (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID().slice(0,8) : Date.now().toString(36));
+      const ns = { id:newId, ...sfForm, name:sfForm.name.trim(), email:sfForm.email.trim(), active:true, createdAt:todayStr() };
+      setStaff(prev => [...prev, ns]);
+      addAudit(currentUser, `Staff added: ${ns.name} (${ns.role})`);
+    }
     setStaffModal(false);
   };
   const toggleStaffActive = id => {
@@ -1245,7 +1268,11 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
     addAudit(currentUser, `Staff ${willBeActive?"activated":"deactivated"}: ${sf?.name}`);
   };
   const doDeleteStaff = id => {
-    if (id === currentUser.id) { setDeleteStaffGuard(null); return; }
+    if (id === currentUser.id) {
+      setDeleteStaffGuard(null);
+      alert("Aap apna khud ka account delete nahi kar sakte.");
+      return;
+    }
     const sf = staff.find(x => x.id === id);
     setStaff(prev => prev.filter(x => x.id !== id));
     addAudit(currentUser, `Staff deleted: ${sf?.name}`);
@@ -1253,13 +1280,18 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
   };
 
   const exportData = () => {
-    // BUG FIX 16: Renamed destructure alias from `s` to `rest` to avoid shadowing
+    // BUG FIX: Renamed destructure alias from `s` to `rest` to avoid shadowing
     // the outer `s` (local settings copy) state variable.
-    const data={exportedAt:fmtDT(),settings,plans,members,staff:staff.map(({pin:_,...rest})=>rest),auditLog};
-    const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
-    const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
-    a.download=`tejas-library-backup-${todayStr()}.json`; a.click();
-    addAudit(currentUser,"Data exported");
+    const data = { exportedAt:fmtDT(), settings, plans, members, staff:staff.map(({pin:_,...rest})=>rest), auditLog };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type:"application/json" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `tejas-library-backup-${todayStr()}.json`;
+    a.click();
+    // Fix: revoke the object URL to avoid a memory leak
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    addAudit(currentUser, "Data exported");
   };
 
   // ── Manual Entry: Add Renewal Row ──────────────────────────────────────
@@ -1279,9 +1311,11 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
   // ── Manual Entry: Save Member ──────────────────────────────────────────
   const saveManualMember = () => {
     setManualError("");
-    if (!manualForm.name.trim()||!manualForm.phone.trim()) { setManualError("Name aur Phone required hain."); return; }
+    if (!manualForm.name.trim() || !manualForm.phone.trim()) { setManualError("Name aur Phone required hain."); return; }
+    if (!/^\d{10}$/.test(manualForm.phone.trim())) { setManualError("Valid 10-digit phone number required hai."); return; }
     if (!manualForm.firstJoined) { setManualError("First Join Date required hai."); return; }
     if (!manualForm.expiry)      { setManualError("Expiry Date required hai."); return; }
+    if (manualForm.firstJoined > manualForm.expiry) { setManualError("First Join Date, Expiry Date se pehle honi chahiye."); return; }
     const seatNum=normalizeSeat(manualForm.seatNo);
     const newM={
       id:genId(members.map(m=>m.id)), name:manualForm.name.trim(), phone:manualForm.phone.trim(),
@@ -1706,7 +1740,7 @@ const LoginScreen = ({ staff, onLogin, isDevRoute=false }) => {
         </div>
         <Card style={{ padding:24 }}>
           <Field label="Email"  value={email} onChange={setEmail} type="email" placeholder={isDevRoute?"dev@tejaslib.internal":"staff@tejaslib.com"} required/>
-          <Field label="PIN"    value={pin}   onChange={setPin}   type="password" placeholder="4-digit PIN" required onKeyDown={e=>{ if(e.key==="Enter") handleLogin(); }}
+          <Field label="PIN"    value={pin}   onChange={setPin}   type="password" placeholder="4-digit PIN" required onKeyDown={e=>{ if(e.key==="Enter") handleLogin(); }}/>
           {error && <Alert color="#DC2626" bg="#FEE2E2" iconName="warn" style={{ marginBottom:12 }}>{error}</Alert>}
           <Btn onClick={handleLogin} iconName={isDevRoute?"code":"shield"} full variant={isDevRoute?"devmode":"primary"}>
             {isDevRoute ? "Enter Dev Panel" : "Login"}
@@ -1926,14 +1960,14 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
 
   const saveSettings = useCallback(async (data) => {
     if (!supabase) return;
-    const { error } = await supabase.from("settings").upsert({ 
-      id: 1, 
+    const { error } = await supabase.from("settings").upsert({
+      id: 1,
       libraryname: data.libraryName,
       totalseats: data.totalSeats,
       defaultfee: data.defaultFee,
       address: data.address,
       timing: data.timing
-    });
+    }, { onConflict: "id" });
     if (error) console.error("Settings save error:", error.message);
     else console.log("Settings updated successfully upstream.");
   }, []);
@@ -2050,9 +2084,9 @@ export default function App() {
     setLoading, currentUser,
   });
 
-  const addAudit = (user, action) => {
-    setAuditLog(prev=>[...prev,{ by:user?.name||"System", action, at:fmtDT() }]);
-  };
+  const addAudit = useCallback((user, action) => {
+    setAuditLog(prev => [...prev, { by: user?.name || "System", action, at: fmtDT() }]);
+  }, []);
 
   const contextValue = { dark, toggle: toggleDark };
 
