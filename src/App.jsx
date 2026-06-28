@@ -1823,9 +1823,14 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
 
   // ─── LOAD FROM SUPABASE — re-runs on every currentUser change ───────────────
   useEffect(() => {
-    // BUG FIX 4: Don't fetch on logout (currentUser=null). Only load when a
-    // real user has just authenticated. Logout resets state client-side already.
-    if (!supabase || !currentUser) return;
+    // ROOT BUG FIX: If there's no logged-in user (initial app load or after logout),
+    // we must release the loading screen immediately so the login form is visible.
+    // Previously this returned early without calling setLoading(false), permanently
+    // trapping the app on the loading spinner.
+    if (!supabase || !currentUser) {
+      setLoading(false);
+      return;
+    }
 
     // ── STEP 1: Kill all stale auto-save timers from previous session FIRST ──
     // This is the atomic guard that prevents the race condition where stale
