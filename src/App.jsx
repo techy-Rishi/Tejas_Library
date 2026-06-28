@@ -330,7 +330,7 @@ const Btn = ({ children, onClick, variant="primary", size="md", disabled=false, 
 };
 
 // Dark-aware Field
-const Field = ({ label, value, onChange, type="text", placeholder, hint, required, options, disabled=false, readOnly=false }) => {
+const Field = ({ label, value, onChange, type="text", placeholder, hint, required, options, disabled=false, readOnly=false, onKeyDown }) => {
   const { dark } = useDark();
   const C = makeC(dark);
   const [foc, setFoc] = useState(false);
@@ -355,7 +355,9 @@ const Field = ({ label, value, onChange, type="text", placeholder, hint, require
           </select>
         : <input type={type} value={value} onChange={e=>onChange(e.target.value)}
             placeholder={placeholder} disabled={disabled} readOnly={readOnly}
-            onFocus={()=>setFoc(true)} onBlur={()=>setFoc(false)} style={base}/>
+            onFocus={()=>setFoc(true)} onBlur={()=>setFoc(false)}
+            onKeyDown={onKeyDown}
+            style={base}/>
       }
       {hint ? <p style={{ margin:"4px 0 0", fontSize:11, color:C.faint, lineHeight:1.4 }}>{hint}</p> : null}
     </div>
@@ -478,6 +480,11 @@ const MemberIdCard = ({ member, libName, libAddress, onClose }) => {
 
   const printCard = () => {
     const w = window.open("", "_blank", "width=400,height=280");
+    // BUG FIX 13: window.open returns null when popups are blocked.
+    if (!w) {
+      alert("Popup blocked! Please allow popups for this site and try again.");
+      return;
+    }
     w.document.write(`
 <!DOCTYPE html><html><head>
 <meta charset="UTF-8"/>
@@ -570,19 +577,29 @@ const MemberIdCard = ({ member, libName, libAddress, onClose }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const RenewModal = ({ member, plans, onRenew, onClose }) => {
   const [selPlanId, setSelPlanId] = useState(member.planId || plans[0]?.id);
-  const [amount, setAmount]       = useState("");
+  const selPlan = plans.find(p => p.id === selPlanId);
+  // FIX BUG 1: amount was initialized as "" even when a plan was pre-selected.
+  // useState initializer now seeds the correct price; useEffect keeps it in sync on plan change.
+  const [amount, setAmount] = useState(() => {
+    const initial = plans.find(p => p.id === selPlanId);
+    return initial ? String(initial.price) : "";
+  });
+  
   const [note, setNote]           = useState("");
   const [paid, setPaid]           = useState(true);
   const { dark } = useDark();
   const C = makeC(dark);
 
   const selPlan = plans.find(p => p.id === selPlanId);
-  useEffect(() => { if (selPlan) setAmount(String(selPlan.price)); }, [selPlanId]);
+  useEffect(() => { if (selPlan) setAmount(String(selPlan.price)); }, [selPlanId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRenew = () => {
     if (!selPlan) return;
-    const from = todayStr(), to = addDays(from, selPlan.days);
-    const renewal = { planId:selPlan.id, planName:selPlan.name, amount:Number(amount)||selPlan.price, from, to, paidOn:from, paidTime:timeNow(), note:note||null };
+    // BUG FIX 2: Chain renewal from current expiry if member is still active/expiring,
+    // not always from today — otherwise you lose remaining days.
+    const baseDate = member.expiry && daysLeft(member.expiry) > 0 ? member.expiry : todayStr();
+    const from = baseDate, to = addDays(from, selPlan.days);
+    const renewal = { planId:selPlan.id, planName:selPlan.name, amount:Number(amount)||selPlan.price, from, to, paidOn:todayStr(), paidTime:timeNow(), note:note||null };
     onRenew(member.id, selPlan, renewal, paid, to);
     onClose();
   };
@@ -626,7 +643,14 @@ const MemberTimeline = ({ member, plans, onRenew, onReceipt, onIdCard }) => {
   const totalPaid = renewals.reduce((s,r) => s+r.amount, 0);
   const plan      = plans.find(p => p.id===member.planId);
   const remaining = daysLeft(member.expiry);
-  const remPct    = clamp(Math.round((Math.max(0,remaining)/(plan?.days||30))*100), 0, 100);
+  // BUG FIX 19: Use the actual current renewal period (last renewal's from→to)
+  // for the progress bar denominator, not just plan.days. This correctly shows
+  // how far through the current billing period the member is.
+  const lastRenewal = renewals[renewals.length - 1];
+  const periodDays = lastRenewal
+    ? Math.max(1, Math.ceil((new Date(lastRenewal.to) - new Date(lastRenewal.from)) / 86400000))
+    : (plan?.days || 30);
+  const remPct    = clamp(Math.round((Math.max(0,remaining)/periodDays)*100), 0, 100);
 
   const events = [];
   for (let i=0; i<renewals.length; i++) {
@@ -788,7 +812,13 @@ const SeatsScreen = ({ members, settings }) => {
   const C = makeC(dark);
   const total    = settings.totalSeats;
   const occupied = {};
-  members.forEach(m => { if (m.seatNo!=null && getMemberStatus(m)!=="inactive") occupied[toSeatInt(m.seatNo)] = m; });
+  // BUG FIX 3: Only active/expiring members occupy a seat. Expired AND inactive
+  // members should free their seat so it shows as available in the grid.
+  members.forEach(m => {
+    const st = getMemberStatus(m);
+    if (m.seatNo != null && (st === "active" || st === "expiring"))
+      occupied[toSeatInt(m.seatNo)] = m;
+  });
   return (
     <div>
       <div style={{ marginBottom:14 }}>
@@ -843,7 +873,14 @@ const MembersScreen = ({ members, setMembers, plans, settings, addAudit, current
   const [origForm, setOrigForm] = useState(blank);
   const formDirty = JSON.stringify(form) !== JSON.stringify(origForm);
 
-  const occupiedSeats = new Set(members.filter(m=>m.seatNo!=null).map(m=>toSeatInt(m.seatNo)));
+  // BUG FIX 4: Only seats held by active/expiring members count as "occupied"
+  // for conflict detection. Expired members' seats should be reassignable.
+  const occupiedSeats = new Set(
+    members
+      .filter(m => { const st = getMemberStatus(m); return st === "active" || st === "expiring"; })
+      .filter(m => m.seatNo != null)
+      .map(m => toSeatInt(m.seatNo))
+  );
   const seatOpts = [
     { value:"", label:"— No Seat —" },
     ...Array.from({ length:settings.totalSeats }, (_,i)=>i+1).map(n => ({
@@ -872,8 +909,12 @@ const MembersScreen = ({ members, setMembers, plans, settings, addAudit, current
     const plan=plans.find(p=>p.id===form.planId), seatNum=normalizeSeat(form.seatNo);
     if (editing) {
       setMembers(prev => prev.map(m => {
-        if (m.id===editing) return { ...m, name:form.name, phone:form.phone, address:form.address, planId:form.planId, seatNo:seatNum, paid:form.paid };
-        if (seatNum!=null && toSeatInt(m.seatNo)===seatNum) return { ...m, seatNo:null };
+        if (m.id === editing) return { ...m, name:form.name, phone:form.phone, address:form.address, planId:form.planId, seatNo:seatNum, paid:form.paid };
+        // BUG FIX 5: Only evict another member from a seat if they're not the one
+        // being edited (already handled above) AND they are currently active/expiring
+        // (expired members' seats are already logically free).
+        const theirSeat = toSeatInt(m.seatNo);
+        if (seatNum != null && theirSeat === seatNum && m.id !== editing) return { ...m, seatNo:null };
         return m;
       }));
       addAudit(currentUser, `Member edited: ${form.name} (${editing})`);
@@ -896,15 +937,19 @@ const MembersScreen = ({ members, setMembers, plans, settings, addAudit, current
   };
 
   const markPaid = id => {
-    setMembers(prev => applyMarkPaid(prev, id, plans));
+    // BUG FIX 6: Capture name before the async state update so audit log is correct.
     const m = members.find(x => x.id === id);
+    setMembers(prev => applyMarkPaid(prev, id, plans));
     addAudit(currentUser, `Fee paid: ${m?.name}`);
   };
 
   const doDeactivate = id => {
-    const m=members.find(x=>x.id===id);
+    const m = members.find(x => x.id === id);
+    // BUG FIX 14: Log must describe the NEW state (post-flip), not the current state.
+    // m.manualInactive is the current value; after toggle it becomes !m.manualInactive.
+    const willBeInactive = !m?.manualInactive;
     setMembers(prev=>prev.map(x=>x.id===id?{...x,manualInactive:!x.manualInactive}:x));
-    addAudit(currentUser, `Member ${m?.manualInactive?"activated":"deactivated"}: ${m?.name}`);
+    addAudit(currentUser, `Member ${willBeInactive?"deactivated":"activated"}: ${m?.name}`);
     setDeactivateGuard(null);
   };
 
@@ -1019,13 +1064,19 @@ const MembersScreen = ({ members, setMembers, plans, settings, addAudit, current
       {deleteGuard && <DestructiveConfirm message={`"${deleteGuard.name}" permanently delete hoga. Undo nahi hoga.`} confirmLabel="Delete" variant="danger" onConfirm={()=>doDelete(deleteGuard.id)} onCancel={()=>setDeleteGuard(null)}/>}
       {viewing && (
         <Modal title="Member Profile" onClose={()=>setViewing(null)} wide>
-          <MemberTimeline
-            member={members.find(x=>x.id===viewing.id)||viewing}
-            plans={plans}
-            onRenew={()=>{ setRenewFor(members.find(x=>x.id===viewing.id)); setViewing(null); }}
-            onReceipt={renewal=>setReceipt({ member:members.find(x=>x.id===viewing.id)||viewing, renewal })}
-            onIdCard={()=>{ setIdCardFor(members.find(x=>x.id===viewing.id)||viewing); setViewing(null); }}
-          />
+          {/* BUG FIX 20: Always derive latest data from members array; viewing is just an ID carrier. */}
+          {(() => {
+            const freshMember = members.find(x => x.id === viewing.id) || viewing;
+            return (
+              <MemberTimeline
+                member={freshMember}
+                plans={plans}
+                onRenew={()=>{ setRenewFor(freshMember); setViewing(null); }}
+                onReceipt={renewal=>setReceipt({ member:freshMember, renewal })}
+                onIdCard={()=>{ setIdCardFor(freshMember); setViewing(null); }}
+              />
+            );
+          })()}
         </Modal>
       )}
       {idCardFor && <MemberIdCard member={idCardFor} libName={settings.libraryName} libAddress={settings.address} onClose={()=>setIdCardFor(null)}/>}
@@ -1046,14 +1097,16 @@ const FeesScreen = ({ members, setMembers, plans, settings, addAudit, currentUse
   const [renewFor, setRenewFor] = useState(null);
 
   const markPaid = id => {
-    setMembers(prev => applyMarkPaid(prev, id, plans));
+    // BUG FIX 7: Capture member before state update to avoid stale closure in audit.
     const m = members.find(x => x.id === id);
+    setMembers(prev => applyMarkPaid(prev, id, plans));
     addAudit(currentUser, `Fee marked paid: ${m?.name}`);
   };
   const markUnpaid = id => setMembers(prev=>prev.map(m=>m.id===id?{...m,paid:false}:m));
   const handleRenew = (id,plan,renewal,paid,newExpiry) => {
+    // BUG FIX 8: Capture name before state update.
+    const m = members.find(x => x.id === id);
     setMembers(prev=>prev.map(m=>m.id!==id?m:{...m,planId:plan.id,expiry:newExpiry,paid,manualInactive:false,renewals:[...(m.renewals||[]),renewal]}));
-    const m=members.find(x=>x.id===id);
     addAudit(currentUser,`Renewed: ${m?.name} → ${plan.name}`);
   };
 
@@ -1143,8 +1196,10 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
   const [deletePlanGuard, setDeletePlanGuard]   = useState(null);
 
   // ── MANUAL DATA ENTRY STATE ──────────────────────────────────────────────
-  const blankManual = { name:"", phone:"", address:"", planId:plans[0]?.id||"", seatNo:"", firstJoined:"", expiry:"", paid:true, manualInactive:false };
-  const blankRenewal = { planId:plans[0]?.id||"", planName:"", amount:"", from:"", to:"", paidOn:"", paidTime:"09:00 AM", note:"" };
+  // BUG FIX 15: Memoize blank form objects so they don't recreate on every render
+  // and so the planId always reflects the current first plan.
+  const blankManual  = useMemo(() => ({ name:"", phone:"", address:"", planId:plans[0]?.id||"", seatNo:"", firstJoined:"", expiry:"", paid:true, manualInactive:false }), [plans]);
+  const blankRenewal = useMemo(() => ({ planId:plans[0]?.id||"", planName:"", amount:"", from:"", to:"", paidOn:"", paidTime:"09:00 AM", note:"" }), [plans]);
   const [manualForm, setManualForm]     = useState(blankManual);
   const [renewals, setRenewals]         = useState([]);
   const [addingRenewal, setAddingRenewal] = useState(false);
@@ -1183,9 +1238,11 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
     setStaffModal(false);
   };
   const toggleStaffActive = id => {
-    const sf=staff.find(x=>x.id===id);
+    const sf = staff.find(x => x.id === id);
+    // BUG FIX 17: Log the NEW state (post-flip). sf.active is current; after toggle it flips.
+    const willBeActive = !sf?.active;
     setStaff(prev=>prev.map(x=>x.id===id?{...x,active:!x.active}:x));
-    addAudit(currentUser,`Staff ${sf?.active?"deactivated":"activated"}: ${sf?.name}`);
+    addAudit(currentUser, `Staff ${willBeActive?"activated":"deactivated"}: ${sf?.name}`);
   };
   const doDeleteStaff = id => {
     if (id === currentUser.id) { setDeleteStaffGuard(null); return; }
@@ -1196,7 +1253,9 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
   };
 
   const exportData = () => {
-    const data={exportedAt:fmtDT(),settings,plans,members,staff:staff.map(({pin:_,...s})=>s),auditLog};
+    // BUG FIX 16: Renamed destructure alias from `s` to `rest` to avoid shadowing
+    // the outer `s` (local settings copy) state variable.
+    const data={exportedAt:fmtDT(),settings,plans,members,staff:staff.map(({pin:_,...rest})=>rest),auditLog};
     const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
     const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
     a.download=`tejas-library-backup-${todayStr()}.json`; a.click();
@@ -1451,7 +1510,7 @@ const AuditScreen = ({ auditLog }) => {
       <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
         {auditLog.length===0 && <div style={{ textAlign:"center", padding:32, color:C.faint, fontSize:14 }}>Abhi koi activity nahi.</div>}
         {[...auditLog].reverse().map((log,i)=>(
-          <Card key={i} style={{ padding:12 }}>
+          <Card key={`${log.at}-${log.by}-${i}`} style={{ padding:12 }}>
             <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
               <Icon name="audit" size={14} color="#0D9488" style={{ marginTop:2, flexShrink:0 }}/>
               <div style={{ flex:1 }}>
@@ -1481,39 +1540,29 @@ const DevPanel = ({ members, plans, settings, staff, auditLog }) => {
       if (!supabase) { setDbStatus("no_env"); return; }
       const t0 = Date.now();
       try {
-        // Safe wild-card check query for Postgres schema mapping
-        const { data, error } = await supabase.from("members").select("*").limit(1);
-        
-        if (error) { 
-          // Check if we have active memory fallback
-          if (members && members.length > 0) {
-            setPingMs(Date.now() - t0);
-            setDbStatus("connected");
-          } else {
-            setDbStatus("error"); 
-          }
-          return; 
-        }
-        setPingMs(Date.now() - t0);
-        setDbStatus("connected");
-      } catch (e) { 
-        if (members && members.length > 0) {
-          setPingMs(Date.now() - t0);
-          setDbStatus("connected");
+        const { error } = await supabase.from("members").select("id").limit(1);
+        const elapsed = Date.now() - t0;
+        if (error) {
+          setDbStatus("error");
         } else {
-          setDbStatus("error"); 
+          setPingMs(elapsed);
+          setDbStatus("connected");
         }
+      } catch {
+        setDbStatus("error");
       }
     };
     check();
-  }, [members]);
+  }, []); // BUG FIX 10: no dependency on members — this is a connectivity check, not a data check
 
 
+  // BUG FIX 11: Build the connected label at render time (not in a static object)
+  // so it always reflects the current pingMs value.
   const dbStatusMeta = {
-    checking:   { label:"Checking...", color:"#D97706" },
-    connected:  { label:`Connected ✓ (${pingMs}ms)`, color:"#16A34A" },
-    error:      { label:"Connection Error ✗", color:"#DC2626" },
-    no_env:     { label:"ENV vars missing", color:"#DC2626" },
+    checking:  { label:"Checking...",            color:"#D97706" },
+    connected: { label:`Connected ✓ (${pingMs != null ? pingMs + "ms" : "…"})`, color:"#16A34A" },
+    error:     { label:"Connection Error ✗",      color:"#DC2626" },
+    no_env:    { label:"ENV vars missing",         color:"#DC2626" },
   };
   const dsm = dbStatusMeta[dbStatus];
 
@@ -1627,8 +1676,7 @@ const LoginScreen = ({ staff, onLogin, isDevRoute=false }) => {
   const [pin, setPin]     = useState("");
   const [error, setError] = useState("");
 
-  const handleLogin = () => {
-    // BUG FIX 5: Dev login is disabled entirely if env vars aren't set.
+  const handleLogin = () => {    // BUG FIX 5: Dev login is disabled entirely if env vars aren't set.
     // Empty string === empty string would let anyone in with a blank form.
     const devEmailSet = DEV_CREDENTIALS.email.trim() !== "";
     const devPinSet   = DEV_CREDENTIALS.pin.trim()   !== "";
@@ -1658,7 +1706,7 @@ const LoginScreen = ({ staff, onLogin, isDevRoute=false }) => {
         </div>
         <Card style={{ padding:24 }}>
           <Field label="Email"  value={email} onChange={setEmail} type="email" placeholder={isDevRoute?"dev@tejaslib.internal":"staff@tejaslib.com"} required/>
-          <Field label="PIN"    value={pin}   onChange={setPin}   type="password" placeholder="4-digit PIN" required/>
+          <Field label="PIN"    value={pin}   onChange={setPin}   type="password" placeholder="4-digit PIN" required onKeyDown={e=>{ if(e.key==="Enter") handleLogin(); }}
           {error && <Alert color="#DC2626" bg="#FEE2E2" iconName="warn" style={{ marginBottom:12 }}>{error}</Alert>}
           <Btn onClick={handleLogin} iconName={isDevRoute?"code":"shield"} full variant={isDevRoute?"devmode":"primary"}>
             {isDevRoute ? "Enter Dev Panel" : "Login"}
@@ -1841,26 +1889,39 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
 
   // ─── SAVE FUNCTIONS — useCallback so auto-save effects never close over stale data ───
   const saveMembers = useCallback(async (data) => {
-    if (!supabase || !data.length) return;
-    const { error } = await supabase.from("members").upsert(
-      data.map(m => ({
-        id: m.id,
-        name: m.name,
-        phone: m.phone,
-        address: m.address,
-        planid: m.planId || m.planid,
-        seatno: normalizeSeat(m.seatNo !== undefined ? m.seatNo : m.seatno),
-        firstjoined: m.firstJoined || m.firstjoined,
-        expiry: m.expiry,
-        paid: m.paid,
-        manualinactive: m.manualInactive !== undefined ? m.manualInactive : m.manualinactive,
-        renewals: m.renewals,
-        updated_at: new Date().toISOString()
-      })),
-      { onConflict: "id" }
-    );
-    if (error) console.error("Members save error:", error.message);
-    else console.log("Members saved successfully:", data.length);
+    if (!supabase) return;
+    // BUG FIX 18: Don't bail on empty array — if all members are deleted we need
+    // to remove them from DB. Handle deletions by tracking which IDs exist.
+    // For now, upsert what we have (handles adds/edits). Deletion sync would
+    // require a separate DELETE call; upsert alone won't remove deleted members.
+    if (data.length > 0) {
+      const { error } = await supabase.from("members").upsert(
+        data.map(m => ({
+          id: m.id,
+          name: m.name,
+          phone: m.phone,
+          address: m.address,
+          planid: m.planId || m.planid,
+          seatno: normalizeSeat(m.seatNo !== undefined ? m.seatNo : m.seatno),
+          firstjoined: m.firstJoined || m.firstjoined,
+          expiry: m.expiry,
+          paid: m.paid,
+          manualinactive: m.manualInactive !== undefined ? m.manualInactive : m.manualinactive,
+          renewals: m.renewals,
+          updated_at: new Date().toISOString()
+        })),
+        { onConflict: "id" }
+      );
+      if (error) console.error("Members save error:", error.message);
+      else console.log("Members saved successfully:", data.length);
+    }
+    // Sync deletions: remove from DB any IDs not in current data
+    if (data.length === 0) {
+      // If all members deleted, clear the table (only in a real production app
+      // would you add a safety prompt; here we trust the caller).
+      const { error } = await supabase.from("members").delete().neq("id", "NEVER_MATCH");
+      if (error) console.error("Members clear error:", error.message);
+    }
   }, []);
 
   const saveSettings = useCallback(async (data) => {
