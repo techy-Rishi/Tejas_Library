@@ -1665,7 +1665,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
           supabase.from("staff").select("*"),
         ]);
 
-        // FIX: PostgreSQL lowercase mapping for Members
+        // FIX: PostgreSQL lowercase field mapping for Members
         if (mRes.data && mRes.data.length > 0) {
           setMembers(mRes.data.map(m => ({
             ...m,
@@ -1677,10 +1677,11 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
           })));
         }
 
-        console.log("PLANS FROM SUPABASE:", pRes.data, "ERROR:", pRes.error);
-        if (pRes.data && pRes.data.length > 0) setPlans(pRes.data);
+        if (pRes.data && pRes.data.length > 0) {
+          setPlans(pRes.data);
+        }
 
-        // FIX: PostgreSQL lowercase mapping for Settings
+        // FIX: PostgreSQL lowercase field mapping for Settings
         if (sRes.data) {
           setSettings({
             libraryName: sRes.data.libraryname || sRes.data.libraryName || DEFAULT_SETTINGS.libraryName,
@@ -1712,6 +1713,59 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     };
     load();
   }, []);
+
+  return { syncing, synced, syncError };
+}
+
+// ─── SAVE FUNCTIONS ─────────────────────────────────────────────────────────
+const saveMembers = async (data) => {
+  if (!supabase || !data.length) return;
+  const { error } = await supabase.from("members").upsert(
+    data.map(m => ({ 
+      id: m.id,
+      name: m.name,
+      phone: m.phone,
+      address: m.address,
+      planid: m.planId,
+      seatno: m.seatNo,
+      firstjoined: m.firstJoined,
+      expiry: m.expiry,
+      paid: m.paid,
+      manualinactive: m.manualInactive,
+      renewals: m.renewals,
+      updated_at: new Date().toISOString() 
+    })),
+    { onConflict: "id" }
+  );
+  if (error) console.error("Members save error:", error.message);
+  else console.log("Members saved:", data.length);
+};
+
+const saveSettings = async (data) => {
+  if (!supabase) return;
+  const { error } = await supabase.from("settings").upsert({ 
+    id: 1, 
+    libraryname: data.libraryName,
+    totalseats: data.totalSeats,
+    defaultfee: data.defaultFee,
+    address: data.address,
+    timing: data.timing
+  });
+  if (error) console.error("Settings save error:", error.message);
+};
+
+const savePlans = async (data) => {
+  if (!supabase || !data.length) return;
+  const { error } = await supabase.from("plans").upsert(data, { onConflict: "id" });
+  if (error) console.error("Plans save error:", error.message);
+};
+
+const saveStaff = async (data) => {
+  if (!supabase || !data.length) return;
+  const { error } = await supabase.from("staff").upsert(data, { onConflict: "id" });
+  if (error) console.error("Staff save error:", error.message);
+};
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────
