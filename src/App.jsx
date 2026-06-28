@@ -1680,39 +1680,66 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     load();
   }, []);
 
-  // Save members to Supabase
-  const saveMembers = async (updatedMembers) => {
-    if (!supabase) return;
-    try {
-      await supabase.from("members").upsert(updatedMembers.map(m=>({ ...m, updated_at:new Date().toISOString() })));
-    } catch(e) { console.warn("Supabase members save failed:", e.message); }
+  // ── SAVE FUNCTIONS ──────────────────────────────────────────────────────────
+  const saveMembers = async (data) => {
+    if (!supabase || !data.length) return;
+    const { error } = await supabase.from("members").upsert(
+      data.map(m => ({ ...m, updated_at: new Date().toISOString() })),
+      { onConflict: "id" }
+    );
+    if (error) console.error("Members save error:", error.message);
   };
 
-  // Debounced save on members change
-  const saveTimer = useRef(null);
+  const saveSettings = async (data) => {
+    if (!supabase) return;
+    const { error } = await supabase.from("settings").upsert({ id: 1, ...data });
+    if (error) console.error("Settings save error:", error.message);
+  };
+
+  const savePlans = async (data) => {
+    if (!supabase || !data.length) return;
+    const { error } = await supabase.from("plans").upsert(data, { onConflict: "id" });
+    if (error) console.error("Plans save error:", error.message);
+  };
+
+  const saveStaff = async (data) => {
+    if (!supabase || !data.length) return;
+    const { error } = await supabase.from("staff").upsert(data, { onConflict: "id" });
+    if (error) console.error("Staff save error:", error.message);
+  };
+
+  // ── AUTO SAVE (debounced) ─────────────────────────────────────────────────
+  const membersTimer  = useRef(null);
+  const settingsTimer = useRef(null);
+  const plansTimer    = useRef(null);
+  const staffTimer    = useRef(null);
+
   useEffect(() => {
     if (!supabase || !synced) return;
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => saveMembers(members), 1500);
-    return () => clearTimeout(saveTimer.current);
+    clearTimeout(membersTimer.current);
+    membersTimer.current = setTimeout(() => saveMembers(members), 1500);
+    return () => clearTimeout(membersTimer.current);
   }, [members, synced]);
 
-  // Settings save
   useEffect(() => {
     if (!supabase || !synced) return;
-    supabase.from("settings").update(settings).eq("id", 1);
+    clearTimeout(settingsTimer.current);
+    settingsTimer.current = setTimeout(() => saveSettings(settings), 1000);
+    return () => clearTimeout(settingsTimer.current);
   }, [settings, synced]);
 
-  // Plans save
   useEffect(() => {
     if (!supabase || !synced) return;
-    supabase.from("plans").upsert(plans);
+    clearTimeout(plansTimer.current);
+    plansTimer.current = setTimeout(() => savePlans(plans), 1000);
+    return () => clearTimeout(plansTimer.current);
   }, [plans, synced]);
 
-  // Staff save
   useEffect(() => {
     if (!supabase || !synced) return;
-    supabase.from("staff").upsert(staff);
+    clearTimeout(staffTimer.current);
+    staffTimer.current = setTimeout(() => saveStaff(staff), 1000);
+    return () => clearTimeout(staffTimer.current);
   }, [staff, synced]);
 
   return { syncing, synced, syncError };
