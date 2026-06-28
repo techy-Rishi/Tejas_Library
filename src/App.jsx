@@ -1645,7 +1645,7 @@ const BottomNav = ({ screen, onNav, perms }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // SUPABASE SYNC HOOK
 // ─────────────────────────────────────────────────────────────────────────────
-function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff) {
+function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading) {
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced]   = useState(false);
   const [syncError, setSyncError] = useState(null);
@@ -1673,6 +1673,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
         setSyncError("Supabase load failed: "+e.message);
       } finally {
         setSyncing(false);
+        setLoading(false);
       }
     };
     load();
@@ -1694,6 +1695,24 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     saveTimer.current = setTimeout(() => saveMembers(members), 1500);
     return () => clearTimeout(saveTimer.current);
   }, [members, synced]);
+
+  // Settings save
+  useEffect(() => {
+    if (!supabase || !synced) return;
+    supabase.from("settings").update(settings).eq("id", 1);
+  }, [settings, synced]);
+
+  // Plans save
+  useEffect(() => {
+    if (!supabase || !synced) return;
+    supabase.from("plans").upsert(plans);
+  }, [plans, synced]);
+
+  // Staff save
+  useEffect(() => {
+    if (!supabase || !synced) return;
+    supabase.from("staff").upsert(staff);
+  }, [staff, synced]);
 
   return { syncing, synced, syncError };
 }
@@ -1717,20 +1736,33 @@ export default function App() {
 
   const [currentUser, setCurrentUser] = useState(null);
   const [screen, setScreen]           = useState("dashboard");
-  const [members, setMembers]         = useState(DEFAULT_MEMBERS);
-  const [plans, setPlans]             = useState(DEFAULT_PLANS);
+  const [members, setMembers]         = useState([]);
+  const [plans, setPlans]             = useState([]);
   const [settings, setSettings]       = useState(DEFAULT_SETTINGS);
-  const [staff, setStaff]             = useState(DEFAULT_STAFF);
+  const [staff, setStaff]             = useState([]);
   const [auditLog, setAuditLog]       = useState([]);
+  const [loading, setLoading]         = useState(!!supabase);
 
   // Supabase sync
-  const { syncing, synced, syncError } = useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff);
+  const { syncing, synced, syncError } = useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading);
 
   const addAudit = (user, action) => {
     setAuditLog(prev=>[...prev,{ by:user?.name||"System", action, at:fmtDT() }]);
   };
 
   const contextValue = { dark, toggle: toggleDark };
+
+  // Loading screen
+  if (loading) return (
+    <DarkCtx.Provider value={contextValue}>
+      <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:FONT }}>
+        <div style={{ textAlign:"center" }}>
+          <div style={{ fontSize:28, marginBottom:8 }}>⟳</div>
+          <div style={{ fontSize:14, color:"#0D9488", fontWeight:700 }}>Loading...</div>
+        </div>
+      </div>
+    </DarkCtx.Provider>
+  );
 
   // Not logged in
   if (!currentUser) {
