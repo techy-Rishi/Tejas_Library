@@ -135,7 +135,7 @@ const Icon = ({ name, size=18, color="currentColor", style={} }) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // UTILITIES
 // ─────────────────────────────────────────────────────────────────────────────
-const todayStr  = () => new Date().toISOString().split("T")[0];
+const todayStr = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().split("T")[0]; };
 const timeNow   = () => new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"});
 const fmtDate   = (d) => d ? new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}) : "—";
 const fmtDateSh = (d) => d ? new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short"}) : "—";
@@ -1879,10 +1879,11 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
           setMembers([]);
         }
 
-        // Plans
+        // Plans — if DB is empty, keep empty (never fall back to DEFAULT_PLANS
+        // which would auto-save hardcoded data back to DB and poison it)
         if (pRes.error) console.error("Plans load error:", pRes.error.message);
-        if (pRes.data && pRes.data.length > 0) setPlans(pRes.data);
-        else setPlans(DEFAULT_PLANS);
+        else if (pRes.data && pRes.data.length > 0) setPlans(pRes.data);
+        else setPlans([]);
 
         // Settings — .single() errors if row doesn't exist yet
         if (!sRes.error && sRes.data) {
@@ -1896,9 +1897,10 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
         }
         // else keep DEFAULT_SETTINGS already in state
 
-        // Staff
+        // Staff — DB is the only source of truth. Never fall back to DEFAULT_STAFF.
+        // If staff table is empty, login will correctly fail (no valid accounts).
         if (stRes.error) console.error("Staff load error:", stRes.error.message);
-        if (stRes.data && stRes.data.length > 0) {
+        else if (stRes.data && stRes.data.length > 0) {
           setStaff(stRes.data.map(s => ({ ...s, active: s.active === true || s.active === "true" || s.active === 1 })));
         } else {
           setStaff([]);
