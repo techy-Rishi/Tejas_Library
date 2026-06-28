@@ -20,7 +20,13 @@ const useDark = () => useContext(DarkCtx);
 // ─────────────────────────────────────────────────────────────────────────────
 // DESIGN TOKENS (Light + Dark)
 // ─────────────────────────────────────────────────────────────────────────────
-const makeC = (dark) => ({
+// FIX 5: makeC is pure and has only 2 possible inputs (true/false).
+// Cache both objects at module level — zero re-computation on any render.
+const _C_CACHE = { light: null, dark: null };
+const makeC = (dark) => {
+  const key = dark ? "dark" : "light";
+  if (_C_CACHE[key]) return _C_CACHE[key];
+  _C_CACHE[key] = {
   bg:           dark ? "#0F172A" : "#F0F4F8",
   surface:      dark ? "#1E293B" : "#FFFFFF",
   surfaceAlt:   dark ? "#334155" : "#F5F7FA",
@@ -52,7 +58,9 @@ const makeC = (dark) => ({
   white:        "#FFFFFF",
   devAccent:    "#7C3AED",
   devBg:        dark ? "#1A0A2E" : "#EDE9FE",
-});
+  };
+  return _C_CACHE[key];
+};
 
 const FONT   = "'Inter','Segoe UI',system-ui,sans-serif";
 const SH_XS  = "0 1px 2px rgba(0,0,0,0.07)";
@@ -134,9 +142,27 @@ const fmtDateSh = (d) => d ? new Date(d).toLocaleDateString("en-IN",{day:"numeri
 const fmtDT     = () => new Date().toLocaleString("en-IN",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
 const daysLeft  = (e) => Math.ceil((new Date(e) - new Date()) / 86400000);
 const addDays   = (b, n) => { const d = new Date(b); d.setDate(d.getDate()+n); return d.toISOString().split("T")[0]; };
-const genId     = () => "LIB" + Math.floor(100 + Math.random()*900);
+// FIX 3: Collision-proof ID — timestamp suffix (base36) + 3 random chars
+// Gives ~46656 combinations per millisecond; practically zero collision risk.
+const genId = (existingIds = []) => {
+  const existing = new Set(existingIds);
+  let id;
+  do {
+    const ts   = Date.now().toString(36).slice(-4).toUpperCase();
+    const rand = Math.random().toString(36).slice(2, 5).toUpperCase();
+    id = "LIB" + ts + rand;
+  } while (existing.has(id));
+  return id;
+};
 const clamp     = (v, lo, hi) => Math.min(Math.max(v,lo), hi);
 const toSeatInt = (v) => v===""||v==null ? null : parseInt(v, 10);
+// FIX 11: Canonical seatNo normalizer — always returns number|null, never string.
+// Use this everywhere seatNo comes from DB, form, or state to keep type consistent.
+const normalizeSeat = (v) => {
+  if (v === "" || v == null) return null;
+  const n = parseInt(v, 10);
+  return isNaN(n) ? null : n;
+};
 
 const getMemberStatus = m => {
   if (m.manualInactive) return "inactive";
@@ -679,6 +705,23 @@ const MemberTimeline = ({ member, plans, onRenew, onReceipt, onIdCard }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FIX 8: Shared markPaid logic — single source of truth used by both
+// MembersScreen and FeesScreen. Guards against double-payment on rapid clicks.
+// ─────────────────────────────────────────────────────────────────────────────
+const applyMarkPaid = (prev, id, plans) => prev.map(m => {
+  if (m.id !== id) return m;
+  if (m.paid) return m; // already paid — no duplicate renewal entry
+  const plan = plans.find(p => p.id === m.planId);
+  const r = {
+    planId: plan?.id, planName: plan?.name || "?",
+    amount: plan?.price || 0,
+    from: todayStr(), to: addDays(todayStr(), plan?.days || 30),
+    paidOn: todayStr(), paidTime: timeNow(), note: null,
+  };
+  return { ...m, paid: true, renewals: [...(m.renewals || []), r] };
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SCREEN: DASHBOARD
 // ─────────────────────────────────────────────────────────────────────────────
 const DashboardScreen = ({ members, plans, settings, onNav }) => {
@@ -826,7 +869,7 @@ const MembersScreen = ({ members, setMembers, plans, settings, addAudit, current
 
   const save = () => {
     if (!form.name.trim()||!form.phone.trim()) return;
-    const plan=plans.find(p=>p.id===form.planId), seatNum=toSeatInt(form.seatNo);
+    const plan=plans.find(p=>p.id===form.planId), seatNum=normalizeSeat(form.seatNo);
     if (editing) {
       setMembers(prev => prev.map(m => {
         if (m.id===editing) return { ...m, name:form.name, phone:form.phone, address:form.address, planId:form.planId, seatNo:seatNum, paid:form.paid };
@@ -836,7 +879,7 @@ const MembersScreen = ({ members, setMembers, plans, settings, addAudit, current
       addAudit(currentUser, `Member edited: ${form.name} (${editing})`);
     } else {
       const newM = {
-        id:genId(), name:form.name, phone:form.phone, address:form.address, planId:form.planId, seatNo:seatNum,
+        id:genId(members.map(m=>m.id)), name:form.name, phone:form.phone, address:form.address, planId:form.planId, seatNo:seatNum,
         firstJoined:todayStr(), expiry:addDays(todayStr(), plan?.days||30), paid:form.paid, manualInactive:false,
         renewals: form.paid && plan ? [{ planId:plan.id, planName:plan.name, amount:plan.price, from:todayStr(), to:addDays(todayStr(),plan.days), paidOn:todayStr(), paidTime:timeNow(), note:null }] : [],
       };
@@ -853,13 +896,8 @@ const MembersScreen = ({ members, setMembers, plans, settings, addAudit, current
   };
 
   const markPaid = id => {
-    setMembers(prev => prev.map(m => {
-      if (m.id!==id) return m;
-      const plan=plans.find(p=>p.id===m.planId);
-      const r={ planId:plan?.id, planName:plan?.name||"?", amount:plan?.price||0, from:todayStr(), to:addDays(todayStr(),plan?.days||30), paidOn:todayStr(), paidTime:timeNow(), note:null };
-      return { ...m, paid:true, renewals:[...(m.renewals||[]),r] };
-    }));
-    const m=members.find(x=>x.id===id);
+    setMembers(prev => applyMarkPaid(prev, id, plans));
+    const m = members.find(x => x.id === id);
     addAudit(currentUser, `Fee paid: ${m?.name}`);
   };
 
@@ -1008,14 +1046,9 @@ const FeesScreen = ({ members, setMembers, plans, settings, addAudit, currentUse
   const [renewFor, setRenewFor] = useState(null);
 
   const markPaid = id => {
-    setMembers(prev=>prev.map(m=>{
-      if(m.id!==id) return m;
-      const plan=plans.find(p=>p.id===m.planId);
-      const r={planId:plan?.id,planName:plan?.name||"?",amount:plan?.price||0,from:todayStr(),to:addDays(todayStr(),plan?.days||30),paidOn:todayStr(),paidTime:timeNow(),note:null};
-      return {...m,paid:true,renewals:[...(m.renewals||[]),r]};
-    }));
-    const m=members.find(x=>x.id===id);
-    addAudit(currentUser,`Fee marked paid: ${m?.name}`);
+    setMembers(prev => applyMarkPaid(prev, id, plans));
+    const m = members.find(x => x.id === id);
+    addAudit(currentUser, `Fee marked paid: ${m?.name}`);
   };
   const markUnpaid = id => setMembers(prev=>prev.map(m=>m.id===id?{...m,paid:false}:m));
   const handleRenew = (id,plan,renewal,paid,newExpiry) => {
@@ -1092,6 +1125,14 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
   const [s, setS]     = useState({...settings});
   const [origS, setOrigS] = useState({...settings});
   const [saved, setSaved] = useState(false);
+
+  // FIX 7: When Supabase finishes loading fresh settings (after login/user-switch),
+  // the `settings` prop updates but local `s` stays stale because useState only
+  // runs its initializer once. This effect keeps them in sync.
+  useEffect(() => {
+    setS({...settings});
+    setOrigS({...settings});
+  }, [settings]);
   const [planModal, setPlanModal]   = useState(false);
   const [editPlan, setEditPlan]     = useState(null);
   const [pForm, setPForm]           = useState({ name:"", days:"", price:"" });
@@ -1182,9 +1223,9 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
     if (!manualForm.name.trim()||!manualForm.phone.trim()) { setManualError("Name aur Phone required hain."); return; }
     if (!manualForm.firstJoined) { setManualError("First Join Date required hai."); return; }
     if (!manualForm.expiry)      { setManualError("Expiry Date required hai."); return; }
-    const seatNum=toSeatInt(manualForm.seatNo);
+    const seatNum=normalizeSeat(manualForm.seatNo);
     const newM={
-      id:genId(), name:manualForm.name.trim(), phone:manualForm.phone.trim(),
+      id:genId(members.map(m=>m.id)), name:manualForm.name.trim(), phone:manualForm.phone.trim(),
       address:manualForm.address||"", planId:manualForm.planId, seatNo:seatNum,
       firstJoined:manualForm.firstJoined, expiry:manualForm.expiry,
       paid:manualForm.paid, manualInactive:manualForm.manualInactive,
@@ -1587,8 +1628,13 @@ const LoginScreen = ({ staff, onLogin, isDevRoute=false }) => {
   const [error, setError] = useState("");
 
   const handleLogin = () => {
-    // Dev login check (secret)
-    if (email.trim()===DEV_CREDENTIALS.email && pin===DEV_CREDENTIALS.pin) {
+    // BUG FIX 5: Dev login is disabled entirely if env vars aren't set.
+    // Empty string === empty string would let anyone in with a blank form.
+    const devEmailSet = DEV_CREDENTIALS.email.trim() !== "";
+    const devPinSet   = DEV_CREDENTIALS.pin.trim()   !== "";
+    if (devEmailSet && devPinSet &&
+        email.trim() === DEV_CREDENTIALS.email &&
+        pin           === DEV_CREDENTIALS.pin) {
       setError("");
       onLogin({ id:"DEV001", name:"Developer", email:DEV_CREDENTIALS.email, role:"developer", active:true });
       return;
@@ -1663,9 +1709,11 @@ const BottomNav = ({ screen, onNav, perms }) => {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SUPABASE SYNC HOOK (FIXED FOR CROSS-ACCOUNT CASE-INSENSITIVE RESOLUTION)
+// SUPABASE SYNC HOOK
+// FIX 9: Accepts a single config object instead of 10 positional params.
+// Adding new state in future = add one key, not change every call site.
 // ─────────────────────────────────────────────────────────────────────────────
-function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading, currentUser) {
+function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, auditLog, setAuditLog, setLoading, currentUser }) {
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced]   = useState(false);
   const [syncError, setSyncError] = useState(null);
@@ -1675,6 +1723,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
   const settingsTimer = useRef(null);
   const plansTimer    = useRef(null);
   const staffTimer    = useRef(null);
+  const auditTimer    = useRef(null); // FIX 10
 
   // Helper: atomically kill every pending auto-save timer
   const killAllTimers = useCallback(() => {
@@ -1682,15 +1731,19 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     clearTimeout(settingsTimer.current);
     clearTimeout(plansTimer.current);
     clearTimeout(staffTimer.current);
+    clearTimeout(auditTimer.current);
     membersTimer.current  = null;
     settingsTimer.current = null;
     plansTimer.current    = null;
     staffTimer.current    = null;
+    auditTimer.current    = null;
   }, []);
 
   // ─── LOAD FROM SUPABASE — re-runs on every currentUser change ───────────────
   useEffect(() => {
-    if (!supabase) return;
+    // BUG FIX 4: Don't fetch on logout (currentUser=null). Only load when a
+    // real user has just authenticated. Logout resets state client-side already.
+    if (!supabase || !currentUser) return;
 
     // ── STEP 1: Kill all stale auto-save timers from previous session FIRST ──
     // This is the atomic guard that prevents the race condition where stale
@@ -1708,16 +1761,19 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     const load = async () => {
       setSyncing(true);
       try {
-        const [mRes, pRes, sRes, stRes] = await Promise.all([
+        const [mRes, pRes, sRes, stRes, aRes] = await Promise.all([
           supabase.from("members").select("*"),
           supabase.from("plans").select("*"),
           supabase.from("settings").select("*").eq("id", 1).single(),
           supabase.from("staff").select("*"),
+          // FIX 10: load audit_log — sorted newest-last, cap at 500 rows
+          supabase.from("audit_log").select("*").order("at", { ascending: true }).limit(500),
         ]);
 
         if (cancelled) return; // effect was cleaned up before fetch completed
 
-        // FIX: Mapping lowercase fields from Postgres to camelCase state safely
+        // FIX 12: Empty DB = empty arrays, not fake demo data.
+        // DEFAULT_* constants are only for the no-Supabase (offline) mode.
         if (mRes.data && mRes.data.length > 0) {
           setMembers(mRes.data.map(m => ({
             id: m.id,
@@ -1725,7 +1781,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
             phone: m.phone,
             address: m.address,
             planId: m.planid || m.planId,
-            seatNo: m.seatno !== undefined ? m.seatno : m.seatNo,
+            seatNo: normalizeSeat(m.seatno !== undefined ? m.seatno : m.seatNo),
             firstJoined: m.firstjoined || m.firstJoined,
             expiry: m.expiry,
             paid: m.paid,
@@ -1733,11 +1789,11 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
             renewals: m.renewals || []
           })));
         } else {
-          setMembers(DEFAULT_MEMBERS);
+          setMembers([]); // real empty DB → empty list, not fake demo members
         }
 
         if (pRes.data && pRes.data.length > 0) setPlans(pRes.data);
-        else setPlans(DEFAULT_PLANS);
+        else setPlans(DEFAULT_PLANS); // plans have sensible defaults (Daily/Monthly/etc)
 
         // FIX: Mapping lowercase preferences safely to camelCase state
         if (sRes.data) {
@@ -1753,7 +1809,12 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
         if (stRes.data && stRes.data.length > 0) {
           setStaff(stRes.data.map(s => ({ ...s, active: s.active === true || s.active === "true" || s.active === 1 })));
         } else {
-          setStaff(DEFAULT_STAFF);
+          setStaff([]); // real empty DB → no staff seeded automatically
+        }
+
+        // FIX 10: restore persisted audit log
+        if (aRes.data && aRes.data.length > 0) {
+          setAuditLog(aRes.data.map(r => ({ by: r.by, action: r.action, at: r.at })));
         }
 
         // ── STEP 3: Only unlock auto-save AFTER all fresh data is committed ──
@@ -1761,10 +1822,10 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
       } catch(e) {
         if (!cancelled) setSyncError("Supabase load failed: " + e.message);
       } finally {
-        if (!cancelled) {
-          setSyncing(false);
-          setLoading(false);
-        }
+        // Always release the loading screen — even if this effect was cancelled
+        // (user switched again mid-fetch). A subsequent effect will handle the new load.
+        setLoading(false);
+        if (!cancelled) setSyncing(false);
       }
     };
 
@@ -1778,8 +1839,8 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     };
   }, [currentUser, killAllTimers]);
 
-  // ─── SAVE FUNCTIONS (FIXED TO EXPLICITLY WRITE TO LOWERCASE POSTGRES COLUMNS) ───
-  const saveMembers = async (data) => {
+  // ─── SAVE FUNCTIONS — useCallback so auto-save effects never close over stale data ───
+  const saveMembers = useCallback(async (data) => {
     if (!supabase || !data.length) return;
     const { error } = await supabase.from("members").upsert(
       data.map(m => ({
@@ -1788,7 +1849,7 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
         phone: m.phone,
         address: m.address,
         planid: m.planId || m.planid,
-        seatno: m.seatNo !== undefined ? m.seatNo : m.seatno,
+        seatno: normalizeSeat(m.seatNo !== undefined ? m.seatNo : m.seatno),
         firstjoined: m.firstJoined || m.firstjoined,
         expiry: m.expiry,
         paid: m.paid,
@@ -1800,9 +1861,9 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     );
     if (error) console.error("Members save error:", error.message);
     else console.log("Members saved successfully:", data.length);
-  };
+  }, []);
 
-  const saveSettings = async (data) => {
+  const saveSettings = useCallback(async (data) => {
     if (!supabase) return;
     const { error } = await supabase.from("settings").upsert({ 
       id: 1, 
@@ -1814,52 +1875,69 @@ function useSupabaseSync(members, setMembers, plans, setPlans, settings, setSett
     });
     if (error) console.error("Settings save error:", error.message);
     else console.log("Settings updated successfully upstream.");
-  };
+  }, []);
 
-  const savePlans = async (data) => {
+  const savePlans = useCallback(async (data) => {
     if (!supabase || !data.length) return;
     const { error } = await supabase.from("plans").upsert(data, { onConflict: "id" });
     if (error) console.error("Plans save error:", error.message);
-  };
+  }, []);
 
-  const saveStaff = async (data) => {
+  const saveStaff = useCallback(async (data) => {
     if (!supabase || !data.length) return;
     const { error } = await supabase.from("staff").upsert(data, { onConflict: "id" });
     if (error) console.error("Staff save error:", error.message);
-  };
+  }, []);
+
+  // FIX 10: persist audit log — insert only new entries (upsert by at+by unique key)
+  const saveAuditLog = useCallback(async (data) => {
+    if (!supabase || !data.length) return;
+    const rows = data.map(r => ({ by: r.by, action: r.action, at: r.at }));
+    const { error } = await supabase.from("audit_log").upsert(rows, { onConflict: "at,by" });
+    if (error) console.error("Audit log save error:", error.message);
+  }, []);
 
   // ─── AUTO-SAVE EFFECTS — gated behind synced AND currentUser ─────────────
   // Because synced is reset to false at the very start of the load effect above,
   // none of these can fire during the user-switch window. They only activate once
   // fresh data has been fully committed and setSynced(true) has been called.
+  // saveX functions are useCallback-stable, so adding them here has zero cost.
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
     clearTimeout(membersTimer.current);
     membersTimer.current = setTimeout(() => saveMembers(members), 1500);
     return () => clearTimeout(membersTimer.current);
-  }, [members, synced, currentUser]);
+  }, [members, synced, currentUser, saveMembers]);
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
     clearTimeout(settingsTimer.current);
     settingsTimer.current = setTimeout(() => saveSettings(settings), 1000);
     return () => clearTimeout(settingsTimer.current);
-  }, [settings, synced, currentUser]);
+  }, [settings, synced, currentUser, saveSettings]);
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
     clearTimeout(plansTimer.current);
     plansTimer.current = setTimeout(() => savePlans(plans), 1000);
     return () => clearTimeout(plansTimer.current);
-  }, [plans, synced, currentUser]);
+  }, [plans, synced, currentUser, savePlans]);
 
   useEffect(() => {
     if (!supabase || !synced || !currentUser) return;
     clearTimeout(staffTimer.current);
     staffTimer.current = setTimeout(() => saveStaff(staff.filter(s => !s.id.startsWith("DEV"))), 1000);
     return () => clearTimeout(staffTimer.current);
-  }, [staff, synced, currentUser]);
+  }, [staff, synced, currentUser, saveStaff]);
+
+  // FIX 10: auto-save audit log on every new entry
+  useEffect(() => {
+    if (!supabase || !synced || !currentUser || !auditLog.length) return;
+    clearTimeout(auditTimer.current);
+    auditTimer.current = setTimeout(() => saveAuditLog(auditLog), 2000);
+    return () => clearTimeout(auditTimer.current);
+  }, [auditLog, synced, currentUser, saveAuditLog]);
 
   return { syncing, synced, syncError };
 }
@@ -1880,12 +1958,18 @@ export default function App() {
   });
   const toggleDark = () => setDark(d => {
     try { localStorage.setItem("lib_dark", d?"0":"1"); } catch {}
+    // Bust the makeC cache for the toggled theme so fresh colors are computed
+    _C_CACHE[d ? "light" : "dark"] = null;
     return !d;
   });
   const C = makeC(dark);
 
   // Route detection: /dev URL = developer panel login
-  const isDevRoute = typeof window !== "undefined" && window.location.pathname === "/dev";
+  // useState so it's stable — plain variable would recalculate but never update
+  // if pathname changes without a full remount (e.g. SPA navigation).
+  const [isDevRoute] = useState(
+    () => typeof window !== "undefined" && window.location.pathname === "/dev"
+  );
 
   const [currentUser, setCurrentUser] = useState(null);
   const [screen, setScreen]           = useState("dashboard");
@@ -1898,7 +1982,12 @@ export default function App() {
 
 
   // Supabase sync
-  const { syncing, synced, syncError } = useSupabaseSync(members, setMembers, plans, setPlans, settings, setSettings, staff, setStaff, setLoading, currentUser);
+  const { syncing, synced, syncError } = useSupabaseSync({
+    members, setMembers, plans, setPlans,
+    settings, setSettings, staff, setStaff,
+    auditLog, setAuditLog,
+    setLoading, currentUser,
+  });
 
   const addAudit = (user, action) => {
     setAuditLog(prev=>[...prev,{ by:user?.name||"System", action, at:fmtDT() }]);
@@ -1958,7 +2047,20 @@ export default function App() {
             {/* Dark mode toggle */}
             <DarkToggle/>
             {/* Logout */}
-            <button onClick={()=>{ setCurrentUser(null); setScreen("dashboard"); }}
+            <button onClick={()=>{
+              setCurrentUser(null);
+              setScreen("dashboard");
+              // FIX 6: Clear all data on logout — previous user's data must not
+              // remain in memory while the next user is on the login screen.
+              setMembers(DEFAULT_MEMBERS);
+              setPlans(DEFAULT_PLANS);
+              setSettings(DEFAULT_SETTINGS);
+              setStaff(DEFAULT_STAFF);
+              setAuditLog([]);
+              // BUG FIX: Reset loading to false on logout so the loading screen
+              // never accidentally shows when the next user hits the login form.
+              setLoading(false);
+            }}
               style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:RADIUS.md, padding:"6px 10px", display:"flex", alignItems:"center", gap:5, cursor:"pointer", fontSize:12, color:C.sub, fontFamily:FONT, fontWeight:600 }}>
               <Icon name="logout" size={13} color={C.sub}/>Logout
             </button>
