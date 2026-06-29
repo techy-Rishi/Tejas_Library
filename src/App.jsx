@@ -137,7 +137,7 @@ const todayStr = () => { const d = new Date(); return new Date(d - d.getTimezone
 const timeNow   = () => new Date().toLocaleTimeString("en-IN",{hour:"2-digit",minute:"2-digit"});
 const fmtDate   = (d) => d ? new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"}) : "—";
 const fmtDateSh = (d) => d ? new Date(d).toLocaleDateString("en-IN",{day:"numeric",month:"short"}) : "—";
-const fmtDT     = () => new Date().toLocaleString("en-IN",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
+const fmtDT     = () => new Date().toLocaleString("en-IN",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"});
 const daysLeft  = (e) => {
   const today = new Date(todayStr()); // midnight, date-only
   return Math.ceil((new Date(e) - today) / 86400000);
@@ -1725,7 +1725,7 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
         // Audit log
         if (aRes.error) console.error("Audit load error:", aRes.error.message);
         if (aRes.data && aRes.data.length > 0) {
-          setAuditLog(aRes.data.map(r => ({ by: r.by || "?", action: r.action || "", at: r.at || "" })));
+          setAuditLog(aRes.data.map(r => ({ id: r.id || "", by: r.by || "?", action: r.action || "", at: r.at || "" })));
         }
 
         // ── STEP 3: Only unlock auto-save AFTER all fresh data is committed ──
@@ -1845,12 +1845,12 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
   // not debounced, so logout doesn't cancel the timer before it fires.
   const saveAuditLog = useCallback(async (data) => {
     if (!supabase || !data.length) return;
-    // Fetch existing 'at' timestamps to avoid inserting duplicates
-    const { data: existing } = await supabase.from("audit_log").select("at");
-    const existingAts = new Set((existing || []).map(r => r.at));
+    // Fetch existing IDs to avoid inserting duplicates
+    const { data: existing } = await supabase.from("audit_log").select("id");
+    const existingIds = new Set((existing || []).map(r => r.id).filter(Boolean));
     const newRows = data
-      .map(r => ({ by: r.by, action: r.action, at: r.at }))
-      .filter(r => !existingAts.has(r.at));
+      .map(r => ({ id: r.id, by: r.by, action: r.action, at: r.at }))
+      .filter(r => r.id && !existingIds.has(r.id));
     if (!newRows.length) return;
     const { error } = await supabase.from("audit_log").insert(newRows);
     if (error) console.error("Audit log save error:", error.message);
@@ -1963,7 +1963,8 @@ export default function App() {
   });
 
   const addAudit = useCallback((user, action) => {
-    setAuditLog(prev => [...prev, { by: user?.name || "System", action, at: fmtDT() }]);
+    const uid = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    setAuditLog(prev => [...prev, { id: uid, by: user?.name || "System", action, at: fmtDT() }]);
   }, []);
 
   const contextValue = { dark, toggle: toggleDark };
