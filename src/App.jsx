@@ -1725,7 +1725,7 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
         // Audit log
         if (aRes.error) console.error("Audit load error:", aRes.error.message);
         if (aRes.data && aRes.data.length > 0) {
-          setAuditLog(aRes.data.map(r => ({ id: r.id || "", by: r.by || "?", action: r.action || "", at: r.at || "" })));
+          setAuditLog(aRes.data.map(r => ({ by: r.by || "?", action: r.action || "", at: r.at || "" })));
         }
 
         // ── STEP 3: Only unlock auto-save AFTER all fresh data is committed ──
@@ -1845,12 +1845,12 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
   // not debounced, so logout doesn't cancel the timer before it fires.
   const saveAuditLog = useCallback(async (data) => {
     if (!supabase || !data.length) return;
-    // Fetch existing IDs to avoid inserting duplicates
-    const { data: existing } = await supabase.from("audit_log").select("id");
-    const existingIds = new Set((existing || []).map(r => r.id).filter(Boolean));
+    // Fetch all existing entries to deduplicate
+    const { data: existing } = await supabase.from("audit_log").select("at,by,action");
+    const existingKeys = new Set((existing || []).map(r => `${r.at}||${r.by}||${r.action}`));
     const newRows = data
-      .map(r => ({ id: r.id, by: r.by, action: r.action, at: r.at }))
-      .filter(r => r.id && !existingIds.has(r.id));
+      .map(r => ({ by: r.by, action: r.action, at: r.at }))
+      .filter(r => !existingKeys.has(`${r.at}||${r.by}||${r.action}`));
     if (!newRows.length) return;
     const { error } = await supabase.from("audit_log").insert(newRows);
     if (error) console.error("Audit log save error:", error.message);
@@ -1963,8 +1963,7 @@ export default function App() {
   });
 
   const addAudit = useCallback((user, action) => {
-    const uid = Date.now().toString(36) + Math.random().toString(36).slice(2,6);
-    setAuditLog(prev => [...prev, { id: uid, by: user?.name || "System", action, at: fmtDT() }]);
+    setAuditLog(prev => [...prev, { by: user?.name || "System", action, at: fmtDT() }]);
   }, []);
 
   const contextValue = { dark, toggle: toggleDark };
