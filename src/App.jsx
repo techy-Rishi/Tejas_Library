@@ -891,9 +891,9 @@ const MembersScreen = ({ members, setMembers, plans, setPlans, settings, addAudi
   };
 
   const markPaid = id => {
-    // BUG FIX 6: Capture name before the async state update so audit log is correct.
     const m = members.find(x => x.id === id);
-    setMembers(prev => applyMarkPaid(prev, id, plans));
+    const updatedMembers = applyMarkPaid(members, id, plans);
+    setMembers(updatedMembers);
     addAudit(currentUser, `Fee paid: ${m?.name}`);
   };
 
@@ -1055,10 +1055,13 @@ const FeesScreen = ({ members, setMembers, plans, settings, addAudit, currentUse
   const [renewFor, setRenewFor] = useState(null);
 
   const markPaid = id => {
-    // BUG FIX 7: Capture member before state update to avoid stale closure in audit.
     const m = members.find(x => x.id === id);
-    setMembers(prev => applyMarkPaid(prev, id, plans));
+    const updatedMembers = applyMarkPaid(members, id, plans);
+    setMembers(updatedMembers);
     addAudit(currentUser, `Fee marked paid: ${m?.name}`);
+    const updatedM = updatedMembers.find(x => x.id === id);
+    const lastRenewal = updatedM?.renewals?.slice(-1)[0];
+    if (updatedM && lastRenewal) setReceipt({ member: updatedM, renewal: lastRenewal });
   };
   const markUnpaid = id => setMembers(prev=>prev.map(m=>m.id===id?{...m,paid:false}:m));
   const handleRenew = (id,plan,renewal,paid,newExpiry) => {
@@ -1912,26 +1915,30 @@ export default function App() {
   });
   const C = makeC(dark);
 
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem("lib_user");
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+
+  // Persist currentUser to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      if (currentUser) localStorage.setItem("lib_user", JSON.stringify(currentUser));
+      else localStorage.removeItem("lib_user");
+    } catch {}
+  }, [currentUser]);
+
   const [screen, setScreen]           = useState("dashboard");
   const [members, setMembers]         = useState([]);
   const [plans, setPlans]             = useState([]);
   const [settings, setSettings]       = useState(() => DEFAULT_SETTINGS);
   const [staff, setStaff]             = useState([]);
   const [auditLog, setAuditLog]       = useState([]);
-  const [loading, setLoading]         = useState(true);
-
-  // Load staff BEFORE login so LoginScreen can authenticate
-  useEffect(() => {
-    if (!supabase) { setLoading(false); return; }
-    supabase.from("staff").select("*").then(({ data, error }) => {
-      if (error) console.error("Staff pre-load error:", error.message);
-      else if (data && data.length > 0) {
-        setStaff(data.map(s => ({ ...s, active: s.active === true || s.active === "true" || s.active === 1 })));
-      }
-      setLoading(false);
-    });
-  }, []);
+  const [loading, setLoading]         = useState(() => {
+    try { return !!localStorage.getItem("lib_user"); } catch { return false; }
+  });
 
 
   // Supabase sync
