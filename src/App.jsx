@@ -1940,6 +1940,18 @@ export default function App() {
     try { return !!localStorage.getItem("lib_user"); } catch { return false; }
   });
 
+  // Staff ko login se PEHLE load karo
+  useEffect(() => {
+    if (!supabase || currentUser) return;
+    supabase.from("staff").select("*").then(({ data, error }) => {
+      if (error) console.error("Staff pre-load error:", error.message);
+      else if (data && data.length > 0) {
+        setStaff(data.map(s => ({ ...s, active: s.active === true || s.active === "true" || s.active === 1 })));
+      }
+      setLoading(false);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 
   // Supabase sync
   const { syncing, synced, syncError } = useSupabaseSync({
