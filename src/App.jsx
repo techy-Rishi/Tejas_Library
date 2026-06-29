@@ -56,8 +56,6 @@ const makeC = (dark) => {
   sub:          dark ? "#94A3B8" : "#475569",
   faint:        dark ? "#64748B" : "#94A3B8",
   white:        "#FFFFFF",
-  devAccent:    "#7C3AED",
-  devBg:        dark ? "#1A0A2E" : "#EDE9FE",
   };
   return _C_CACHE[key];
 };
@@ -183,69 +181,17 @@ const STATUS_META = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DEFAULT DATA
+// DEFAULT DATA — All data comes from Supabase only
 // ─────────────────────────────────────────────────────────────────────────────
-const D = (offset) => addDays(todayStr(), offset);
-
 const DEFAULT_SETTINGS = {
   libraryName:"Tejas Library", totalSeats:35, defaultFee:500,
-  address:"Jaunpur, Uttar Pradesh", timing:"6:00 AM – 10:00 PM",
-};
-
-const DEFAULT_PLANS = [
-  { id:"p1", name:"Daily",     days:1,   price:30   },
-  { id:"p2", name:"Monthly",   days:30,  price:500  },
-  { id:"p3", name:"Quarterly", days:90,  price:1299 },
-  { id:"p4", name:"Annual",    days:365, price:3999 },
-];
-
-const DEFAULT_MEMBERS = [
-  { id:"LIB101", name:"Ravi Kumar",   phone:"9876543210", address:"Jaunpur, UP",
-    firstJoined:D(-60),  planId:"p2", seatNo:3,  expiry:D(22),  paid:true,  manualInactive:false,
-    renewals:[
-      { planId:"p2", planName:"Monthly", amount:500, from:D(-60), to:D(-30), paidOn:D(-60), paidTime:"09:00 AM", note:null },
-      { planId:"p2", planName:"Monthly", amount:450, from:D(-30), to:D(22),  paidOn:D(-30), paidTime:"09:30 AM", note:"₹50 discount — exam student" },
-    ]},
-  { id:"LIB102", name:"Priya Sharma", phone:"9812345678", address:"Varanasi, UP",
-    firstJoined:D(-95),  planId:"p3", seatNo:7,  expiry:D(3),   paid:false, manualInactive:false,
-    renewals:[
-      { planId:"p3", planName:"Quarterly", amount:1299, from:D(-95), to:D(3), paidOn:D(-95), paidTime:"11:00 AM", note:null },
-    ]},
-  { id:"LIB103", name:"Amit Yadav",   phone:"9900112233", address:"Jaunpur, UP",
-    firstJoined:D(-180), planId:"p2", seatNo:null, expiry:D(-10), paid:false, manualInactive:false,
-    renewals:[
-      { planId:"p2", planName:"Monthly", amount:500, from:D(-180), to:D(-150), paidOn:D(-180), paidTime:"08:00 AM", note:null },
-      { planId:"p2", planName:"Monthly", amount:500, from:D(-150), to:D(-120), paidOn:D(-150), paidTime:"09:00 AM", note:null },
-      { planId:"p2", planName:"Monthly", amount:500, from:D(-40),  to:D(-10),  paidOn:D(-40),  paidTime:"10:00 AM", note:null },
-    ]},
-  { id:"LIB104", name:"Sneha Singh",  phone:"9911223344", address:"Allahabad, UP",
-    firstJoined:D(-200), planId:"p4", seatNo:14, expiry:D(165), paid:true, manualInactive:false,
-    renewals:[
-      { planId:"p4", planName:"Annual", amount:3999, from:D(-200), to:D(165), paidOn:D(-200), paidTime:"10:00 AM", note:null },
-    ]},
-  { id:"LIB105", name:"Mohit Gupta",  phone:"9988776655", address:"Jaunpur, UP",
-    firstJoined:D(-300), planId:"p2", seatNo:null, expiry:D(-60), paid:false, manualInactive:true,
-    renewals:[
-      { planId:"p2", planName:"Monthly", amount:500, from:D(-300), to:D(-270), paidOn:D(-300), paidTime:"11:30 AM", note:null },
-    ]},
-];
-
-const DEFAULT_STAFF = [
-  { id:"S001", name:"Admin Owner", email:"admin@tejaslib.com", role:"superadmin", pin:"1234", active:true, createdAt:D(-180) },
-  { id:"S002", name:"Rahul Staff", email:"rahul@tejaslib.com", role:"staff",      pin:"5678", active:true, createdAt:D(-90)  },
-];
-
-// ─── DEV CREDENTIALS (hidden from owner) ────────────────────────────────────
-const DEV_CREDENTIALS = {
-  email: import.meta.env.VITE_DEV_EMAIL || "",
-  pin:   import.meta.env.VITE_DEV_PIN   || "",
+  address:"", timing:"",
 };
 
 const ROLE_PERMS = {
   superadmin: ["dashboard","seats","members","fees","admin","audit"],
   staff:      ["dashboard","seats","members","fees"],
   readonly:   ["dashboard","members"],
-  developer:  ["dashboard","seats","members","fees","admin","audit","devpanel"],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -868,7 +814,7 @@ const MembersScreen = ({ members, setMembers, plans, setPlans, settings, addAudi
   const [deleteGuard, setDeleteGuard] = useState(null);
   const [warnClose, setWarnClose] = useState(false);
 
-  const blank = { name:"", phone:"", address:"", planId:plans[0]?.id||"", seatNo:"", paid:false };
+  const blank = useMemo(() => ({ name:"", phone:"", address:"", planId:plans[0]?.id||"", seatNo:"", paid:false }), [plans]);
   const [form, setForm]         = useState(blank);
   const [origForm, setOrigForm] = useState(blank);
   const formDirty = JSON.stringify(form) !== JSON.stringify(origForm);
@@ -896,7 +842,10 @@ const MembersScreen = ({ members, setMembers, plans, setPlans, settings, addAudi
     return matchQ && matchF;
   });
 
-  const openAdd  = () => { setEditing(null); setForm(blank); setOrigForm(blank); setModal(true); };
+  const openAdd  = () => {
+    if (plans.length === 0) { alert("Pehle Admin Panel mein kam se kam ek Plan banao."); return; }
+    setEditing(null); setForm(blank); setOrigForm(blank); setModal(true);
+  };
   const openEdit = m => {
     setEditing(m.id);
     const f = { name:m.name, phone:m.phone, address:m.address||"", planId:m.planId, seatNo:m.seatNo!=null?String(m.seatNo):"", paid:m.paid };
@@ -1250,6 +1199,11 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
     if (!sfForm.name.trim() || !sfForm.email.trim() || !sfForm.pin) return;
     if (!/^\d{4}$/.test(sfForm.pin)) { alert("PIN exactly 4 digits hona chahiye."); return; }
     if (editStaff) {
+      const existing = staff.find(x => x.id === editStaff);
+      if (existing?.role === "superadmin" && sfForm.role !== "superadmin") {
+        alert("Superadmin ka role change nahi ho sakta.");
+        return;
+      }
       setStaff(prev => prev.map(sf => sf.id===editStaff ? {...sf, ...sfForm, name:sfForm.name.trim(), email:sfForm.email.trim()} : sf));
       addAudit(currentUser, `Staff edited: ${sfForm.name.trim()}`);
     } else {
@@ -1262,18 +1216,26 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
   };
   const toggleStaffActive = id => {
     const sf = staff.find(x => x.id === id);
-    // BUG FIX 17: Log the NEW state (post-flip). sf.active is current; after toggle it flips.
+    if (sf?.role === "superadmin") {
+      alert("Superadmin account ko deactivate nahi kar sakte.");
+      return;
+    }
     const willBeActive = !sf?.active;
     setStaff(prev=>prev.map(x=>x.id===id?{...x,active:!x.active}:x));
     addAudit(currentUser, `Staff ${willBeActive?"activated":"deactivated"}: ${sf?.name}`);
   };
   const doDeleteStaff = id => {
+    const sf = staff.find(x => x.id === id);
     if (id === currentUser.id) {
       setDeleteStaffGuard(null);
       alert("Aap apna khud ka account delete nahi kar sakte.");
       return;
     }
-    const sf = staff.find(x => x.id === id);
+    if (sf?.role === "superadmin") {
+      setDeleteStaffGuard(null);
+      alert("Superadmin account delete nahi ho sakta.");
+      return;
+    }
     setStaff(prev => prev.filter(x => x.id !== id));
     addAudit(currentUser, `Staff deleted: ${sf?.name}`);
     setDeleteStaffGuard(null);
@@ -1411,8 +1373,8 @@ const AdminPanel = ({ settings, setSettings, plans, setPlans, members, setMember
                 </div>
                 <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                   <Btn onClick={()=>openEditStaff(sf)} variant="ghost" size="sm" iconName="edit">Edit</Btn>
-                  <Btn onClick={()=>toggleStaffActive(sf.id)} variant="ghost" size="sm">{sf.active?"Deactivate":"Activate"}</Btn>
-                  <Btn onClick={()=>setDeleteStaffGuard(sf)} variant="danger" size="sm" iconName="trash"/>
+                  {sf.role !== "superadmin" && <Btn onClick={()=>toggleStaffActive(sf.id)} variant="ghost" size="sm">{sf.active?"Deactivate":"Activate"}</Btn>}
+                  {sf.role !== "superadmin" && <Btn onClick={()=>setDeleteStaffGuard(sf)} variant="danger" size="sm" iconName="trash"/>}
                 </div>
               </Card>
             ))}
@@ -1560,167 +1522,16 @@ const AuditScreen = ({ auditLog }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DEVELOPER PANEL (secret — /dev route ya hidden login se)
-// ─────────────────────────────────────────────────────────────────────────────
-const DevPanel = ({ members, plans, settings, staff, auditLog }) => {
-  const { dark } = useDark();
-  const C = makeC(dark);
-  const [tab, setTab] = useState("overview");
-  const [dbStatus, setDbStatus] = useState("checking");
-  const [pingMs, setPingMs]     = useState(null);
-
-  useEffect(() => {
-    const check = async () => {
-      if (!supabase) { setDbStatus("no_env"); return; }
-      const t0 = Date.now();
-      try {
-        const { error } = await supabase.from("members").select("id").limit(1);
-        const elapsed = Date.now() - t0;
-        if (error) {
-          setDbStatus("error");
-        } else {
-          setPingMs(elapsed);
-          setDbStatus("connected");
-        }
-      } catch {
-        setDbStatus("error");
-      }
-    };
-    check();
-  }, []); // BUG FIX 10: no dependency on members — this is a connectivity check, not a data check
-
-
-  // BUG FIX 11: Build the connected label at render time (not in a static object)
-  // so it always reflects the current pingMs value.
-  const dbStatusMeta = {
-    checking:  { label:"Checking...",            color:"#D97706" },
-    connected: { label:`Connected ✓ (${pingMs != null ? pingMs + "ms" : "…"})`, color:"#16A34A" },
-    error:     { label:"Connection Error ✗",      color:"#DC2626" },
-    no_env:    { label:"ENV vars missing",         color:"#DC2626" },
-  };
-  const dsm = dbStatusMeta[dbStatus];
-
-  const tabs = [["overview","Overview"],["db","Database"],["env","Config"],["raw","Raw Data"]];
-
-  return (
-    <div>
-      <div style={{ background:"linear-gradient(135deg,#1A0A2E,#2D1B69)", borderRadius:RADIUS.lg, padding:"18px 20px", marginBottom:20 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-          <div style={{ width:40, height:40, background:"rgba(124,58,237,0.3)", borderRadius:RADIUS.md, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid rgba(124,58,237,0.5)" }}>
-            <Icon name="code" size={20} color="#A78BFA"/>
-          </div>
-          <div>
-            <div style={{ fontSize:16, fontWeight:900, color:"#F1F5F9", letterSpacing:"-0.2px" }}>Developer Panel</div>
-            <div style={{ fontSize:11, color:"#94A3B8", marginTop:2 }}>Internal tool · System diagnostics</div>
-          </div>
-          <span style={{ ...sBadge("#A78BFA","rgba(124,58,237,0.3)",10), marginLeft:"auto", border:"1px solid rgba(124,58,237,0.4)" }}>DEV ONLY</span>
-        </div>
-      </div>
-
-      <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto" }}>
-        {tabs.map(([v,l])=><button key={v} onClick={()=>setTab(v)} style={sTabBtn(C, tab===v, "#7C3AED")}>{l}</button>)}
-      </div>
-
-      {tab==="overview" && (
-        <div>
-          <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:16 }}>
-            <StatBox icon="users"    label="Total Members" value={members.length}    color="#7C3AED"/>
-            <StatBox icon="fee"      label="Total Plans"   value={plans.length}      color="#0D9488"/>
-            <StatBox icon="audit"    label="Audit Entries" value={auditLog.length}   color="#D97706"/>
-            <StatBox icon="database" label="DB Status"     value={dbStatus==="connected"?"Online":"Offline"} color={dbStatus==="connected"?"#16A34A":"#DC2626"}/>
-          </div>
-          <Card style={{ padding:16, marginBottom:12 }}>
-            <div style={{ fontSize:12, fontWeight:700, color:C.sub, marginBottom:10, textTransform:"uppercase", letterSpacing:"0.05em" }}>System Info</div>
-            {[
-              ["App Version", "v2.0.0"],
-              ["Supabase URL", supabaseUrl ? supabaseUrl.substring(0,40)+"..." : "NOT SET"],
-              ["DB Connection", dsm.label],
-              ["Members in memory", members.length],
-              ["Staff accounts", staff.length],
-              ["Library", settings.libraryName],
-            ].map(([k,v])=>(
-              <div key={k} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${C.border}`, fontSize:12 }}>
-                <span style={{ color:C.faint, fontWeight:600 }}>{k}</span>
-                <span style={{ color:k==="DB Connection"?dsm.color:C.text, fontWeight:700, fontFamily:"monospace", fontSize:11 }}>{v}</span>
-              </div>
-            ))}
-          </Card>
-        </div>
-      )}
-
-      {tab==="db" && (
-        <div>
-          <Alert color={dsm.color} bg={dark?dsm.color+"22":"#F0FDF4"} iconName={dbStatus==="connected"?"check":"warn"} style={{ marginBottom:16 }}>
-            Supabase: <b>{dsm.label}</b>
-          </Alert>
-          <Card style={{ padding:16 }}>
-            <div style={{ fontSize:12, fontWeight:700, color:C.sub, marginBottom:10, textTransform:"uppercase", letterSpacing:"0.05em" }}>Required Tables</div>
-            {["members","plans","settings","staff","audit_log"].map(t=>(
-              <div key={t} style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 0", borderBottom:`1px solid ${C.border}` }}>
-                <Icon name={dbStatus==="connected"?"check":"warn"} size={13} color={dbStatus==="connected"?"#16A34A":"#D97706"}/>
-                <code style={{ fontSize:12, color:C.text, fontFamily:"monospace" }}>{t}</code>
-              </div>
-            ))}
-          </Card>
-          <div style={{ marginTop:12 }}>
-            <Alert color="#4F46E5" bg={dark?"#4F46E522":"#EEF2FF"} iconName="info">
-              SQL setup ke liye neeche diye SQL file ko Supabase SQL editor mein run karo.
-            </Alert>
-          </div>
-        </div>
-      )}
-
-      {tab==="env" && (
-        <Card style={{ padding:16 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:C.sub, marginBottom:12, textTransform:"uppercase", letterSpacing:"0.05em" }}>Environment Variables</div>
-          {[
-            ["VITE_SUPABASE_URL", supabaseUrl?"✓ Set":"✗ Missing"],
-            ["VITE_SUPABASE_ANON_KEY", supabaseAnonKey?"✓ Set (hidden)":"✗ Missing"],
-          ].map(([k,v])=>(
-            <div key={k} style={{ marginBottom:12 }}>
-              <div style={{ fontSize:11, fontWeight:700, color:C.faint, marginBottom:4 }}>{k}</div>
-              <code style={{ fontSize:12, color:v.startsWith("✓")?"#16A34A":"#DC2626", fontWeight:700 }}>{v}</code>
-            </div>
-          ))}
-          <Alert color="#D97706" bg={dark?"#D9770622":"#FEF3C7"} iconName="warn" style={{ marginTop:8 }}>
-            Vercel &rarr; Project Settings &rarr; Environment Variables mein VITE_ prefix ke saath add karo.
-          </Alert>
-        </Card>
-      )}
-
-      {tab==="raw" && (
-        <Card style={{ padding:16 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:C.sub, marginBottom:10 }}>Raw Members JSON (first 2)</div>
-          <pre style={{ fontSize:10, color:C.text, overflow:"auto", maxHeight:300, background:C.surfaceAlt, padding:12, borderRadius:RADIUS.md, margin:0 }}>
-            {JSON.stringify(members.slice(0,2), null, 2)}
-          </pre>
-        </Card>
-      )}
-    </div>
-  );
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // LOGIN SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
-const LoginScreen = ({ staff, onLogin, isDevRoute=false }) => {
+const LoginScreen = ({ staff, onLogin }) => {
   const { dark } = useDark();
   const C = makeC(dark);
-  const [email, setEmail] = useState(isDevRoute ? DEV_CREDENTIALS.email : "");
+  const [email, setEmail] = useState("");
   const [pin, setPin]     = useState("");
   const [error, setError] = useState("");
 
-  const handleLogin = () => {    // BUG FIX 5: Dev login is disabled entirely if env vars aren't set.
-    // Empty string === empty string would let anyone in with a blank form.
-    const devEmailSet = DEV_CREDENTIALS.email.trim() !== "";
-    const devPinSet   = DEV_CREDENTIALS.pin.trim()   !== "";
-    if (devEmailSet && devPinSet &&
-        email.trim() === DEV_CREDENTIALS.email &&
-        pin           === DEV_CREDENTIALS.pin) {
-      setError("");
-      onLogin({ id:"DEV001", name:"Developer", email:DEV_CREDENTIALS.email, role:"developer", active:true });
-      return;
-    }
+  const handleLogin = () => {
     const user = staff.find(s => s.email===email.trim() && s.pin===pin && s.active);
     if (user) { setError(""); onLogin(user); }
     else       setError("Email ya PIN galat hai, ya account inactive hai.");
@@ -1730,27 +1541,25 @@ const LoginScreen = ({ staff, onLogin, isDevRoute=false }) => {
     <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", padding:24, fontFamily:FONT }}>
       <div style={{ width:"100%", maxWidth:360 }}>
         <div style={{ textAlign:"center", marginBottom:28 }}>
-          <div style={{ width:64, height:64, background:isDevRoute?"linear-gradient(135deg,#7C3AED,#A855F7)":"linear-gradient(135deg,#0D9488,#0EA5A0)", borderRadius:RADIUS.lg, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px", boxShadow:SH_MD }}>
-            <Icon name={isDevRoute?"code":"shield"} size={30} color="#fff"/>
+          <div style={{ width:64, height:64, background:"linear-gradient(135deg,#0D9488,#0EA5A0)", borderRadius:RADIUS.lg, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px", boxShadow:SH_MD }}>
+            <Icon name="shield" size={30} color="#fff"/>
           </div>
           <div style={{ fontSize:24, fontWeight:900, color:C.text, letterSpacing:"-0.5px" }}>
-            {isDevRoute ? "Developer Access" : "Tejas Library"}
+            Tejas Library
           </div>
-          <div style={{ fontSize:13, color:C.sub, marginTop:4 }}>{isDevRoute ? "Internal Panel" : "Staff Login"}</div>
+          <div style={{ fontSize:13, color:C.sub, marginTop:4 }}>Staff Login</div>
         </div>
         <Card style={{ padding:24 }}>
-          <Field label="Email"  value={email} onChange={setEmail} type="email" placeholder={isDevRoute?"dev@tejaslib.internal":"staff@tejaslib.com"} required/>
+          <Field label="Email"  value={email} onChange={setEmail} type="email" placeholder="staff@tejaslib.com" required/>
           <Field label="PIN"    value={pin}   onChange={setPin}   type="password" placeholder="4-digit PIN" required onKeyDown={e=>{ if(e.key==="Enter") handleLogin(); }}/>
           {error && <Alert color="#DC2626" bg="#FEE2E2" iconName="warn" style={{ marginBottom:12 }}>{error}</Alert>}
-          <Btn onClick={handleLogin} iconName={isDevRoute?"code":"shield"} full variant={isDevRoute?"devmode":"primary"}>
-            {isDevRoute ? "Enter Dev Panel" : "Login"}
+          <Btn onClick={handleLogin} iconName="shield" full variant="primary">
+            Login
           </Btn>
         </Card>
-        {!isDevRoute && (
-          <div style={{ textAlign:"center", marginTop:14, fontSize:11, color:C.faint }}>
-            Demo: admin@tejaslib.com / 1234
-          </div>
-        )}
+        <div style={{ textAlign:"center", marginTop:14, fontSize:11, color:C.faint }}>
+          Staff email aur PIN darj karo
+        </div>
         {/* Dark mode toggle on login screen */}
         <div style={{ textAlign:"center", marginTop:16 }}>
           <DarkToggle/>
@@ -1773,7 +1582,6 @@ const BottomNav = ({ screen, onNav, perms }) => {
     { id:"fees",      icon:"fee",      label:"Fees"    },
     { id:"admin",     icon:"settings", label:"Admin"   },
     { id:"audit",     icon:"audit",    label:"Audit"   },
-    { id:"devpanel",  icon:"code",     label:"Dev"     },
   ].filter(i => perms.includes(i.id));
 
   return (
@@ -1781,8 +1589,8 @@ const BottomNav = ({ screen, onNav, perms }) => {
       {items.map(it=>(
         <button key={it.id} onClick={()=>onNav(it.id)}
           style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"8px 4px 10px", background:"none", border:"none", cursor:"pointer", gap:3 }}>
-          <Icon name={it.icon} size={20} color={screen===it.id?(it.id==="devpanel"?"#7C3AED":"#0D9488"):C.faint}/>
-          <span style={{ fontSize:9, fontWeight:700, color:screen===it.id?(it.id==="devpanel"?"#7C3AED":"#0D9488"):C.faint, fontFamily:FONT }}>{it.label}</span>
+          <Icon name={it.icon} size={20} color={screen===it.id?"#0D9488":C.faint}/>
+          <span style={{ fontSize:9, fontWeight:700, color:screen===it.id?"#0D9488":C.faint, fontFamily:FONT }}>{it.label}</span>
         </button>
       ))}
     </div>
@@ -1827,6 +1635,7 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
       // Kill all pending auto-save timers immediately on logout
       // so no debounced write fires after the user has left.
       killAllTimers();
+      if (!supabase) return; // error screen handles this case
       setLoading(false);
       return;
     }
@@ -2006,17 +1815,16 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
 
   const saveStaff = useCallback(async (data) => {
     if (!supabase) return;
-    const filtered = data.filter(s => !s.id.startsWith("DEV"));
-    if (filtered.length > 0) {
-      const { error } = await supabase.from("staff").upsert(filtered, { onConflict: "id" });
+    if (data.length > 0) {
+      const { error } = await supabase.from("staff").upsert(data, { onConflict: "id" });
       if (error) console.error("Staff save error:", error.message);
     }
-    // BUG FIX: Delete staff rows from DB that no longer exist in local state.
+    // Delete staff rows from DB that no longer exist in local state.
     // Without this, deleting a staff member in UI would NOT remove them from DB,
     // so they'd reappear on next login and could still log in.
     const { data: dbStaff, error: fetchErr } = await supabase.from("staff").select("id");
     if (!fetchErr && dbStaff) {
-      const localIds = new Set(filtered.map(s => s.id));
+      const localIds = new Set(data.map(s => s.id));
       const toDelete = dbStaff.map(s => s.id).filter(id => !localIds.has(id));
       if (toDelete.length > 0) {
         const { error: delErr } = await supabase.from("staff").delete().in("id", toDelete);
@@ -2100,21 +1908,14 @@ export default function App() {
   });
   const C = makeC(dark);
 
-  // Route detection: /dev URL = developer panel login
-  // useState so it's stable — plain variable would recalculate but never update
-  // if pathname changes without a full remount (e.g. SPA navigation).
-  const [isDevRoute] = useState(
-    () => typeof window !== "undefined" && window.location.pathname === "/dev"
-  );
-
   const [currentUser, setCurrentUser] = useState(null);
   const [screen, setScreen]           = useState("dashboard");
-  const [members, setMembers]         = useState(() => DEFAULT_MEMBERS);
-  const [plans, setPlans]             = useState(() => DEFAULT_PLANS);
+  const [members, setMembers]         = useState([]);
+  const [plans, setPlans]             = useState([]);
   const [settings, setSettings]       = useState(() => DEFAULT_SETTINGS);
-  const [staff, setStaff]             = useState(() => DEFAULT_STAFF);
+  const [staff, setStaff]             = useState([]);
   const [auditLog, setAuditLog]       = useState([]);
-  const [loading, setLoading]         = useState(!!supabase);
+  const [loading, setLoading]         = useState(false);
 
 
   // Supabase sync
@@ -2130,6 +1931,24 @@ export default function App() {
   }, []);
 
   const contextValue = { dark, toggle: toggleDark };
+
+  // Supabase not configured — show error, app cannot run without it
+  if (!supabase) return (
+    <DarkCtx.Provider value={contextValue}>
+      <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:FONT, padding:24 }}>
+        <div style={{ textAlign:"center", maxWidth:340 }}>
+          <div style={{ width:64, height:64, background:"#FEE2E2", borderRadius:"50%", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}>
+            <Icon name="warn" size={28} color="#DC2626"/>
+          </div>
+          <div style={{ fontSize:18, fontWeight:900, color:C.text, marginBottom:8 }}>Supabase Not Configured</div>
+          <div style={{ fontSize:13, color:C.sub, lineHeight:1.6 }}>
+            <code>VITE_SUPABASE_URL</code> aur <code>VITE_SUPABASE_ANON_KEY</code> environment variables set nahi hain.<br/><br/>
+            <code>.env</code> file mein dono values add karo aur app restart karo.
+          </div>
+        </div>
+      </div>
+    </DarkCtx.Provider>
+  );
 
   // Loading screen
   if (loading) return (
@@ -2147,7 +1966,7 @@ export default function App() {
   if (!currentUser) {
     return (
       <DarkCtx.Provider value={contextValue}>
-        <LoginScreen staff={staff} isDevRoute={isDevRoute} onLogin={user=>{ setCurrentUser(user); addAudit(user,"Logged in"); }}/>
+        <LoginScreen staff={staff} onLogin={user=>{ setCurrentUser(user); addAudit(user,"Logged in"); }}/>
       </DarkCtx.Provider>
     );
   }
@@ -2164,11 +1983,11 @@ export default function App() {
         <div style={{ background:C.surface, borderBottom:`1px solid ${C.border}`, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:50, boxShadow:SH_SM }}>
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
             <div style={{ width:32, height:32, background:"linear-gradient(135deg,#0D9488,#0EA5A0)", borderRadius:RADIUS.md, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <Icon name={currentUser.role==="developer"?"code":"shield"} size={16} color="#fff"/>
+              <Icon name="shield" size={16} color="#fff"/>
             </div>
             <div>
               <div style={{ fontSize:14, fontWeight:900, color:C.text, letterSpacing:"-0.2px" }}>
-                {currentUser.role==="developer" ? "Dev Mode" : settings.libraryName}
+                {settings.libraryName}
               </div>
               <div style={{ fontSize:10, color:C.faint }}>Logged in as <b>{currentUser.name}</b></div>
             </div>
@@ -2220,7 +2039,6 @@ export default function App() {
           {safeScreen==="fees"      && <FeesScreen      {...commonProps}/>}
           {safeScreen==="admin"     && perms.includes("admin")    && <AdminPanel settings={settings} setSettings={setSettings} plans={plans} setPlans={setPlans} members={members} setMembers={setMembers} staff={staff} setStaff={setStaff} auditLog={auditLog} addAudit={addAudit} currentUser={currentUser}/>}
           {safeScreen==="audit"     && perms.includes("audit")    && <AuditScreen auditLog={auditLog}/>}
-          {safeScreen==="devpanel"  && perms.includes("devpanel") && <DevPanel members={members} plans={plans} settings={settings} staff={staff} auditLog={auditLog}/>}
         </div>
 
         {/* ── BOTTOM NAV ─────────────────────────────────────────────────── */}
