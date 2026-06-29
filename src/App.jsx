@@ -1532,7 +1532,11 @@ const LoginScreen = ({ staff, onLogin }) => {
   const [error, setError] = useState("");
 
   const handleLogin = () => {
-    const user = staff.find(s => s.email===email.trim() && s.pin===pin && s.active);
+    const user = staff.find(s =>
+      s.email === email.trim() &&
+      String(s.pin) === String(pin).trim() &&
+      (s.active === true || s.active === "true" || s.active === 1)
+    );
     if (user) { setError(""); onLogin(user); }
     else       setError("Email ya PIN galat hai, ya account inactive hai.");
   };
@@ -1915,7 +1919,19 @@ export default function App() {
   const [settings, setSettings]       = useState(() => DEFAULT_SETTINGS);
   const [staff, setStaff]             = useState([]);
   const [auditLog, setAuditLog]       = useState([]);
-  const [loading, setLoading]         = useState(false);
+  const [loading, setLoading]         = useState(true);
+
+  // Load staff BEFORE login so LoginScreen can authenticate
+  useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
+    supabase.from("staff").select("*").then(({ data, error }) => {
+      if (error) console.error("Staff pre-load error:", error.message);
+      else if (data && data.length > 0) {
+        setStaff(data.map(s => ({ ...s, active: s.active === true || s.active === "true" || s.active === 1 })));
+      }
+      setLoading(false);
+    });
+  }, []);
 
 
   // Supabase sync
