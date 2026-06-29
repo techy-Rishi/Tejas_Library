@@ -1845,13 +1845,15 @@ function useSupabaseSync({ members, setMembers, plans, setPlans, settings, setSe
   // not debounced, so logout doesn't cancel the timer before it fires.
   const saveAuditLog = useCallback(async (data) => {
     if (!supabase || !data.length) return;
-    const rows = data.map(r => ({ by: r.by, action: r.action, at: r.at }));
-    const { error } = await supabase.from("audit_log").upsert(rows, { onConflict: "at,by", ignoreDuplicates: true });
-    if (error) {
-      // Fallback: plain insert if the unique constraint doesn't exist
-      const { error: e2 } = await supabase.from("audit_log").insert(rows);
-      if (e2) console.error("Audit log save error:", e2.message);
-    }
+    // Fetch existing 'at' timestamps to avoid inserting duplicates
+    const { data: existing } = await supabase.from("audit_log").select("at");
+    const existingAts = new Set((existing || []).map(r => r.at));
+    const newRows = data
+      .map(r => ({ by: r.by, action: r.action, at: r.at }))
+      .filter(r => !existingAts.has(r.at));
+    if (!newRows.length) return;
+    const { error } = await supabase.from("audit_log").insert(newRows);
+    if (error) console.error("Audit log save error:", error.message);
   }, []);
 
   // ─── AUTO-SAVE EFFECTS ────────────────────────────────────────────────────────
@@ -1940,14 +1942,13 @@ export default function App() {
     try { return !!localStorage.getItem("lib_user"); } catch { return false; }
   });
 
-  // Staff ko login se PEHLE load karo
+  // Staff preload — login se pehle fetch karo (currentUser nahi hoga tab)
   useEffect(() => {
     if (!supabase || currentUser) return;
     supabase.from("staff").select("*").then(({ data, error }) => {
-      if (error) console.error("Staff pre-load error:", error.message);
-      else if (data && data.length > 0) {
+      if (error) console.error("Staff pre-load:", error.message);
+      else if (data && data.length > 0)
         setStaff(data.map(s => ({ ...s, active: s.active === true || s.active === "true" || s.active === 1 })));
-      }
       setLoading(false);
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2001,7 +2002,7 @@ export default function App() {
   if (!currentUser) {
     return (
       <DarkCtx.Provider value={contextValue}>
-        <LoginScreen staff={staff} onLogin={user=>{ setCurrentUser(user); addAudit(user,"Logged in"); }}/>
+        <LoginScreen staff={staff} onLogin={user=>{ setCurrentUser(user); }}/>
       </DarkCtx.Provider>
     );
   }
