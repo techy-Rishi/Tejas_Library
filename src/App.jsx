@@ -476,12 +476,41 @@ const RenewModal = ({member,plans,onRenew,onClose}) => {
   const [note,setNote]=useState("");
   const [paid,setPaid]=useState(true);
   const selPlan=plans.find(p=>p.id===selPlanId);
-  useEffect(()=>{if(selPlan)setAmount(String(selPlan.price));},[selPlanId]);// eslint-disable-line
+
+  // Default "from" date: continue from current expiry if still active/expiring,
+  // otherwise today. User can override this manually (e.g. for back-dated renewals).
+  const defaultFrom = member.expiry&&daysLeft(member.expiry)>0?member.expiry:todayStr();
+  const [from,setFrom]=useState(defaultFrom);
+  const [to,setTo]=useState(()=>{const p=plans.find(x=>x.id===(member.planId||plans[0]?.id)); return addDays(defaultFrom, p?.days||30);});
+  const [dateTouched,setDateTouched]=useState(false); // once user edits dates manually, stop auto-recalculating "to"
+
+  useEffect(()=>{
+    if(selPlan) setAmount(String(selPlan.price));
+    // Only auto-recalculate "to" from "from" + plan days if the user hasn't manually edited dates yet
+    if(selPlan && !dateTouched) setTo(addDays(from, selPlan.days));
+  },[selPlanId]);// eslint-disable-line
+
+  const handleFromChange = (v) => {
+    setDateTouched(true);
+    setFrom(v);
+    if(selPlan) setTo(addDays(v, selPlan.days));
+  };
+  const handleToChange = (v) => {
+    setDateTouched(true);
+    setTo(v);
+  };
+
+  // Informational only — does not block saving. Lets staff know if there's a
+  // gap or overlap vs the member's current expiry, but back-dated renewals
+  // (e.g. renewing from last month) are fully allowed.
+  const lastExpiry = member.expiry;
+  const gapDays = lastExpiry ? Math.round((new Date(from)-new Date(lastExpiry))/86400000) : null;
+
+  const dateError = to && from && new Date(to) <= new Date(from) ? "To date, From date ke baad honi chahiye." : "";
 
   const handleRenew = () => {
     if(!selPlan) return;
-    const baseDate = member.expiry&&daysLeft(member.expiry)>0?member.expiry:todayStr();
-    const from=baseDate, to=addDays(from,selPlan.days);
+    if(!from || !to || dateError) return;
     const renewal={planId:selPlan.id,planName:selPlan.name,amount:Number(amount)||selPlan.price,from,to,paidOn:todayStr(),paidTime:timeNow(),note:note||null};
     onRenew(member.id,selPlan,renewal,paid,to);
     onClose();
@@ -500,6 +529,32 @@ const RenewModal = ({member,plans,onRenew,onClose}) => {
           </div>
         ))}
       </div>
+
+      <Divider label="Renewal Period"/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <Field label="From Date" value={from} onChange={handleFromChange} type="date" required/>
+        <Field label="To Date"   value={to}   onChange={handleToChange}   type="date" required/>
+      </div>
+      <div style={{marginTop:-6,marginBottom:14}}>
+        <Btn onClick={()=>{setDateTouched(false); const f=defaultFrom; setFrom(f); if(selPlan) setTo(addDays(f, selPlan.days));}} variant="ghost" size="sm">
+          Reset to suggested dates
+        </Btn>
+      </div>
+
+      {dateError && (
+        <Alert color="#DC2626" bg="#FEE2E2" iconName="warn" style={{marginBottom:14}}>{dateError}</Alert>
+      )}
+      {!dateError && gapDays!=null && gapDays>1 && (
+        <Alert color="#D97706" bg="#FEF3C7" iconName="warn" style={{marginBottom:14}}>
+          {gapDays}-day gap from current expiry ({fmtDate(lastExpiry)}). Yeh sirf info hai — agar tum jaan-bujh kar pichle period se renew kar rahe ho (back-dated entry), toh aage badh sakte ho.
+        </Alert>
+      )}
+      {!dateError && gapDays!=null && gapDays<0 && (
+        <Alert color="#2563EB" bg="#EFF6FF" iconName="info" style={{marginBottom:14}}>
+          Yeh renewal current expiry ({fmtDate(lastExpiry)}) se pehle shuru ho rahi hai — back-dated / overlapping entry. Theek hai agar yahi intend kiya hai.
+        </Alert>
+      )}
+
       <Field label="Amount (₹)" value={amount} onChange={setAmount} type="number" hint="Custom amount allowed"/>
       <Field label="Note (optional)" value={note} onChange={setNote} placeholder="e.g. ₹50 discount"/>
       <label style={{display:"flex",alignItems:"center",gap:10,background:paid?C.greenLight:C.surfaceAlt,borderRadius:RADIUS.md,padding:"12px 14px",marginBottom:16,cursor:"pointer",border:`1px solid ${paid?"#16A34A":C.border}`,transition:TR}}>
@@ -509,7 +564,7 @@ const RenewModal = ({member,plans,onRenew,onClose}) => {
           <div style={{fontSize:11,color:C.sub}}>Timeline mein record hoga</div>
         </div>
       </label>
-      <Btn onClick={handleRenew} variant="purple" iconName="refresh" full>Renew Now</Btn>
+      <Btn onClick={handleRenew} variant="purple" iconName="refresh" full disabled={!!dateError}>Renew Now</Btn>
     </Modal>
   );
 };
