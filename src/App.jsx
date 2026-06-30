@@ -71,8 +71,24 @@ const getMemberStatus = (m) => {
 };
 
 // Revenue = sum of renewals. Never affected by paid flag.
-const memberRevenue = (m) => (m.renewals||[]).reduce((s,r)=>s+(Number(r.amount)||0),0);
+// [PER-SESSION PAID TRACKING]
+// Every renewal/session now carries its own status: "paid" | "pending".
+// Revenue is the sum of ONLY paid-status renewals — pending sessions never
+// count toward revenue until explicitly marked paid. This lets staff see
+// exactly which month/cycle is unpaid instead of one blanket member flag,
+// so "2 months due" is visible instead of being lost in a single boolean.
+const sessionPaid = (r) => (r.status ? r.status==="paid" : !!r.paid); // backward-compat for old data without status
+
+const memberRevenue = (m) => (m.renewals||[]).filter(sessionPaid).reduce((s,r)=>s+(Number(r.amount)||0),0);
 const totalRevenue  = (members) => members.reduce((s,m)=>s+memberRevenue(m),0);
+
+// Sessions awaiting payment for a member
+const pendingSessions = (m) => (m.renewals||[]).filter(r=>!sessionPaid(r));
+const pendingCount    = (m) => pendingSessions(m).length;
+const pendingAmount   = (m) => pendingSessions(m).reduce((s,r)=>s+(Number(r.amount)||0),0);
+
+// A member has "fee pending" if ANY session is unpaid
+const hasFeePending = (m) => pendingCount(m) > 0;
 
 const STATUS_META = {
   active:   {label:"Active",        color:"#16A34A", bg:"#DCFCE7", icon:"check"},
@@ -92,36 +108,56 @@ const ROLE_PERMS = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SECTION 2: MEMBER OPERATIONS (THE CORE FIX)
+// SECTION 2: MEMBER OPERATIONS (PER-SESSION PAID TRACKING)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// THE RULE:
-//   paid       = "current cycle fee collected" flag (UI only, no revenue impact)
-//   renewals[] = actual payment history (only source of revenue)
+// THE RULE (v2):
+//   Every renewal/session has its own `status: "paid" | "pending"`.
+//   Revenue = sum of amounts from sessions where status === "paid" ONLY.
 //
-// Mark Paid   → set paid=true  ONLY  (no renewal added → no revenue change)
-// Unmark Paid → set paid=false ONLY  (no renewal removed → no revenue change)
-// Renew       → push renewal entry + set paid=true + update expiry  (revenue increases)
-// New member  → if paid=true, push first-join renewal (real payment event)
-// Manual entry→ renewals come from form entries explicitly
+//   Renew (checkbox CHECKED)   → new session created with status:"paid"   → revenue increases immediately
+//   Renew (checkbox UNCHECKED) → new session created with status:"pending" → revenue UNCHANGED until marked paid
+//   Mark Paid on a session      → flips THAT session's status to "paid"    → revenue increases by that session's amount
+//   Unmark a session            → flips THAT session's status back to "pending" → revenue decreases by that session's amount
+//
+// This means a member can have e.g. 3 sessions: paid, paid, pending — so
+// "2 months ago paid, this month not paid" is visible at a glance, instead
+// of one blanket true/false flag that loses that history.
+//
+// `m.paid` (legacy boolean) is kept in sync as a convenience flag = true only
+// if the member has ZERO pending sessions, purely for simple UI badges/filters.
+
+const recomputeLegacyPaidFlag = (m) => ({ ...m, paid: !hasFeePending(m) });
 
 const ops = {
-  // [FIX-1,2,3]: Mark Paid — toggles flag only, NEVER touches renewals
-  markPaid: (members, id) =>
-    members.map(m => m.id!==id ? m : { ...m, paid: true }),
-
-  // Unmark Paid — toggles flag only, NEVER touches renewals
-  markUnpaid: (members, id) =>
-    members.map(m => m.id!==id ? m : { ...m, paid: false }),
-
-  // Renew — creates a new renewal entry (the ONLY place renewals are added outside forms)
-  applyRenewal: (members, id, plan, renewal, paid, newExpiry) =>
-    members.map(m => m.id!==id ? m : {
-      ...m, planId:plan.id, expiry:newExpiry, paid, manualInactive:false,
-      renewals:[...(m.renewals||[]), renewal],
+  // Mark a SPECIFIC session (by index in renewals[]) as paid.
+  // Revenue increases by exactly that session's amount — nothing else changes.
+  markSessionPaid: (members, memberId, sessionIndex) =>
+    members.map(m => {
+      if (m.id !== memberId) return m;
+      const renewals = (m.renewals||[]).map((r,i) => i===sessionIndex ? { ...r, status:"paid", paidOn: r.paidOn||todayStr(), paidTime: r.paidTime||timeNow() } : r);
+      return recomputeLegacyPaidFlag({ ...m, renewals });
     }),
 
-  // Edit member fields (no renewal change)
+  // Unmark a SPECIFIC session back to pending. Revenue decreases by that amount.
+  markSessionPending: (members, memberId, sessionIndex) =>
+    members.map(m => {
+      if (m.id !== memberId) return m;
+      const renewals = (m.renewals||[]).map((r,i) => i===sessionIndex ? { ...r, status:"pending" } : r);
+      return recomputeLegacyPaidFlag({ ...m, renewals });
+    }),
+
+  // Renew — creates a new session with explicit paid/pending status based on
+  // the checkbox at renewal time. Only "paid" sessions contribute to revenue.
+  applyRenewal: (members, id, plan, renewal, isPaid, newExpiry) =>
+    members.map(m => {
+      if (m.id !== id) return m;
+      const session = { ...renewal, status: isPaid ? "paid" : "pending" };
+      const updated = { ...m, planId:plan.id, expiry:newExpiry, manualInactive:false, renewals:[...(m.renewals||[]), session] };
+      return recomputeLegacyPaidFlag(updated);
+    }),
+
+  // Edit member fields (no renewal/session change)
   editMember: (members, id, fields, seatNum) =>
     members.map(m => {
       if (m.id===id) return { ...m, ...fields, seatNo:seatNum };
@@ -131,6 +167,7 @@ const ops = {
           (st==="active"||st==="expiring")) return { ...m, seatNo:null };
       return m;
     }),
+
 
   // Deactivate / activate toggle
   toggleActive: (members, id) =>
@@ -557,11 +594,11 @@ const RenewModal = ({member,plans,onRenew,onClose}) => {
 
       <Field label="Amount (₹)" value={amount} onChange={setAmount} type="number" hint="Custom amount allowed"/>
       <Field label="Note (optional)" value={note} onChange={setNote} placeholder="e.g. ₹50 discount"/>
-      <label style={{display:"flex",alignItems:"center",gap:10,background:paid?C.greenLight:C.surfaceAlt,borderRadius:RADIUS.md,padding:"12px 14px",marginBottom:16,cursor:"pointer",border:`1px solid ${paid?"#16A34A":C.border}`,transition:TR}}>
+      <label style={{display:"flex",alignItems:"center",gap:10,background:paid?C.greenLight:C.amberLight,borderRadius:RADIUS.md,padding:"12px 14px",marginBottom:16,cursor:"pointer",border:`1px solid ${paid?"#16A34A":"#D97706"}`,transition:TR}}>
         <input type="checkbox" checked={paid} onChange={e=>setPaid(e.target.checked)} style={{width:17,height:17,accentColor:"#16A34A"}}/>
         <div>
-          <div style={{fontWeight:700,color:paid?"#16A34A":C.text,fontSize:14}}>Fee collect kar li ✓</div>
-          <div style={{fontSize:11,color:C.sub}}>Timeline mein record hoga</div>
+          <div style={{fontWeight:700,color:paid?"#16A34A":"#D97706",fontSize:14}}>{paid?"Is session ka fee collect ho gaya ✓":"Is session ka fee abhi pending hai"}</div>
+          <div style={{fontSize:11,color:C.sub}}>{paid?"Revenue mein turant add hoga":"Revenue tab tak add nahi hoga jab tak Fees screen se Mark Paid na karo"}</div>
         </div>
       </label>
       <Btn onClick={handleRenew} variant="purple" iconName="refresh" full disabled={!!dateError}>Renew Now</Btn>
@@ -573,11 +610,13 @@ const RenewModal = ({member,plans,onRenew,onClose}) => {
 // SECTION 8: MEMBER TIMELINE
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MemberTimeline = ({member,plans,onRenew,onReceipt,onIdCard}) => {
+const MemberTimeline = ({member,plans,onRenew,onReceipt,onIdCard,onMarkSessionPaid,onMarkSessionPending}) => {
   const {dark}=useDark(); const C=makeC(dark);
   const renewals=member.renewals||[];
   const status=getMemberStatus(member); const sm=STATUS_META[status];
   const revenue=memberRevenue(member);
+  const pending=pendingSessions(member);
+  const pendingAmt=pendingAmount(member);
   const plan=plans.find(p=>p.id===member.planId);
   const remaining=daysLeft(member.expiry);
   const lastRenewal=renewals[renewals.length-1];
@@ -588,7 +627,7 @@ const MemberTimeline = ({member,plans,onRenew,onReceipt,onIdCard}) => {
   for(let i=0;i<renewals.length;i++){
     const r=renewals[i];
     if(i!==0){const gap=Math.round((new Date(r.from)-new Date(renewals[i-1].to))/86400000);if(gap>1)events.push({type:"gap",from:renewals[i-1].to,to:r.from,days:gap});}
-    events.push({type:"renewal",...r,index:i+1});
+    events.push({type:"renewal",...r,index:i+1,sessionIdx:i});
   }
 
   return (
@@ -599,7 +638,10 @@ const MemberTimeline = ({member,plans,onRenew,onReceipt,onIdCard}) => {
           <div>
             <div style={{fontSize:18,fontWeight:900,color:C.text}}>{member.name}</div>
             <div style={{fontSize:13,color:C.sub}}>{member.phone} · {member.id}</div>
-            <div style={{marginTop:6,display:"flex",gap:6,flexWrap:"wrap"}}><StatusBadge status={status}/></div>
+            <div style={{marginTop:6,display:"flex",gap:6,flexWrap:"wrap"}}>
+              <StatusBadge status={status}/>
+              {pending.length>0&&<Badge text={`${pending.length} session(s) pending`} color="#DC2626" bg={C.redLight} icon="bell"/>}
+            </div>
           </div>
         </div>
         <div style={{background:C.surface,borderRadius:RADIUS.md,padding:12,boxShadow:SH_XS}}>
@@ -614,7 +656,8 @@ const MemberTimeline = ({member,plans,onRenew,onReceipt,onIdCard}) => {
       </div>
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
         <StatBox icon="fee"      label="Total Revenue"  value={`₹${revenue}`}      color="#16A34A"/>
-        <StatBox icon="calendar" label="Sessions"       value={renewals.length}     color="#0D9488"/>
+        <StatBox icon="calendar" label="Sessions"       value={renewals.length}    color="#0D9488"/>
+        {pending.length>0&&<StatBox icon="bell" label="Pending Amount" value={`₹${pendingAmt}`} sub={`${pending.length} session(s)`} color="#DC2626"/>}
       </div>
       <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
         {(status==="expired"||status==="expiring")&&<Btn onClick={onRenew} variant="purple" iconName="refresh" full>Renew Now</Btn>}
@@ -623,30 +666,37 @@ const MemberTimeline = ({member,plans,onRenew,onReceipt,onIdCard}) => {
       <Divider label={`Activity Ledger — ${renewals.length} entries`}/>
       <div style={{position:"relative",paddingLeft:24}}>
         <div style={{position:"absolute",left:9,top:0,bottom:0,width:2,background:C.border}}/>
-        {events.map((e,idx)=>(
+        {events.map((e,idx)=>{
+          const isPaid = e.type==="renewal" ? sessionPaid(e) : null;
+          return (
           <div key={idx} style={{position:"relative",marginBottom:14}}>
-            <div style={{position:"absolute",left:-21,top:6,width:12,height:12,borderRadius:"50%",background:e.type==="gap"?"#D97706":"#0D9488",border:`2px solid ${C.surface}`}}/>
+            <div style={{position:"absolute",left:-21,top:6,width:12,height:12,borderRadius:"50%",background:e.type==="gap"?"#D97706":isPaid?"#0D9488":"#DC2626",border:`2px solid ${C.surface}`}}/>
             {e.type==="gap"
               ?<div style={{background:C.amberLight,borderRadius:RADIUS.md,padding:"8px 12px",fontSize:12,color:"#D97706",fontWeight:600}}>{e.days}-day gap between {fmtDateSh(e.from)} – {fmtDateSh(e.to)}</div>
-              :<div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:RADIUS.md,padding:"11px 13px",boxShadow:SH_XS}}>
+              :<div style={{background:isPaid?C.surface:C.redLight,border:`1px solid ${isPaid?C.border:"#DC262633"}`,borderRadius:RADIUS.md,padding:"11px 13px",boxShadow:SH_XS}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                   <div>
                     <span style={{fontWeight:800,color:C.text,fontSize:13}}>Session #{e.index} — {e.planName}</span>
+                    {" "}<Badge text={isPaid?"Paid":"Pending"} color={isPaid?"#16A34A":"#DC2626"} bg={isPaid?C.greenLight:C.redLight} size={10}/>
                     {e.note&&<div style={{fontSize:11,color:"#D97706",marginTop:2}}>{e.note}</div>}
                   </div>
                   <div style={{textAlign:"right"}}>
-                    <div style={{fontSize:15,fontWeight:900,color:"#16A34A",fontFamily:"monospace"}}>₹{e.amount}</div>
+                    <div style={{fontSize:15,fontWeight:900,color:isPaid?"#16A34A":"#DC2626",fontFamily:"monospace"}}>₹{e.amount}</div>
                     <div style={{fontSize:10,color:C.faint}}>{fmtDateSh(e.from)} – {fmtDateSh(e.to)}</div>
                   </div>
                 </div>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <span style={{fontSize:11,color:C.faint}}>Paid: {fmtDate(e.paidOn)} {e.paidTime}</span>
-                  {onReceipt&&<Btn onClick={()=>onReceipt(e)} variant="ghost" size="sm" iconName="print">Receipt</Btn>}
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:6}}>
+                  <span style={{fontSize:11,color:C.faint}}>{isPaid?`Paid: ${fmtDate(e.paidOn)} ${e.paidTime||""}`:"Not yet collected"}</span>
+                  <div style={{display:"flex",gap:6}}>
+                    {!isPaid&&onMarkSessionPaid&&<Btn onClick={()=>onMarkSessionPaid(e.sessionIdx)} variant="green" size="sm" iconName="check">Mark Paid</Btn>}
+                    {isPaid&&onMarkSessionPending&&<Btn onClick={()=>onMarkSessionPending(e.sessionIdx)} variant="ghost" size="sm">Unmark</Btn>}
+                    {isPaid&&onReceipt&&<Btn onClick={()=>onReceipt(e)} variant="ghost" size="sm" iconName="print">Receipt</Btn>}
+                  </div>
                 </div>
               </div>
             }
           </div>
-        ))}
+        );})}
         {events.length===0&&<div style={{fontSize:13,color:C.faint,padding:"8px 0"}}>Koi record nahi.</div>}
       </div>
     </div>
@@ -662,14 +712,14 @@ const DashboardScreen = ({members,plans,settings,onNav}) => {
   const active   = members.filter(m=>getMemberStatus(m)==="active").length;
   const expiring = members.filter(m=>getMemberStatus(m)==="expiring").length;
   const expired  = members.filter(m=>getMemberStatus(m)==="expired").length;
-  const unpaid   = members.filter(m=>!m.paid).length;
+  const unpaidMembers = members.filter(m=>hasFeePending(m));
   const revTotal = totalRevenue(members);
   const occupied = members.filter(m=>m.seatNo!=null&&(getMemberStatus(m)==="active"||getMemberStatus(m)==="expiring")).length;
 
   const alerts=[
     ...members.filter(m=>getMemberStatus(m)==="expiring").map(m=>({type:"warn",msg:`${m.name} — ${daysLeft(m.expiry)}d bacha hai`,action:()=>onNav("members")})),
     ...members.filter(m=>getMemberStatus(m)==="expired"&&!m.manualInactive).map(m=>({type:"red",msg:`${m.name} — expired ${Math.abs(daysLeft(m.expiry))}d pehle`,action:()=>onNav("members")})),
-    ...members.filter(m=>!m.paid&&getMemberStatus(m)==="active").map(m=>({type:"amber",msg:`${m.name} — fee pending`,action:()=>onNav("fees")})),
+    ...unpaidMembers.map(m=>({type:"amber",msg:`${m.name} — ${pendingCount(m)} session(s) pending · ₹${pendingAmount(m)}`,action:()=>onNav("fees")})),
   ];
 
   return (
@@ -686,7 +736,7 @@ const DashboardScreen = ({members,plans,settings,onNav}) => {
       <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:16}}>
         <StatBox icon="warn" label="Expiring Soon"  value={expiring} color="#D97706"/>
         <StatBox icon="x"    label="Expired"        value={expired}  color="#DC2626"/>
-        <StatBox icon="bell" label="Fee Pending"    value={unpaid}   color="#EA580C"/>
+        <StatBox icon="bell" label="Fee Pending"    value={unpaidMembers.length}   sub={`₹${unpaidMembers.reduce((s,m)=>s+pendingAmount(m),0)} due`} color="#EA580C"/>
         <StatBox icon="seat" label="Seats Occupied" value={`${occupied}/${settings.totalSeats}`} color="#4F46E5"/>
       </div>
       {alerts.length>0&&(
@@ -815,18 +865,25 @@ const MembersScreen = ({members,setMembers,plans,setPlans,settings,addAudit,curr
     const plan=plans.find(p=>p.id===form.planId);
     const seatNum=normalizeSeat(form.seatNo);
     if(editing){
-      setMembers(prev=>ops.editMember(prev,editing,{name:form.name,phone:form.phone,address:form.address,planId:form.planId,paid:form.paid},seatNum));
+      setMembers(prev=>ops.editMember(prev,editing,{name:form.name,phone:form.phone,address:form.address,planId:form.planId},seatNum));
       addAudit(currentUser,`Member edited: ${form.name} (${editing})`);
     } else {
-      // [FIX-4]: First-join renewal created ONLY if paid=true — this is a real payment event
-      const firstRenewal=form.paid&&plan?[{planId:plan.id,planName:plan.name,amount:plan.price,from:todayStr(),to:addDays(todayStr(),plan.days),paidOn:todayStr(),paidTime:timeNow(),note:null}]:[];
+      // First-join session is ALWAYS created (this is the member's first billing cycle),
+      // but its status reflects whether fee was actually collected — paid or pending.
+      // Revenue only counts it if status==="paid".
+      const firstSession = plan ? [{
+        planId:plan.id, planName:plan.name, amount:plan.price,
+        from:todayStr(), to:addDays(todayStr(),plan.days),
+        paidOn: form.paid?todayStr():null, paidTime: form.paid?timeNow():null,
+        note:null, status: form.paid?"paid":"pending",
+      }] : [];
       const newM={
         id:genId(members.map(m=>m.id)),
         name:form.name,phone:form.phone,address:form.address,
         planId:form.planId,seatNo:seatNum,
         firstJoined:todayStr(),expiry:addDays(todayStr(),plan?.days||30),
         paid:form.paid,manualInactive:false,
-        renewals:firstRenewal,
+        renewals:firstSession,
       };
       // Evict another active/expiring member if seat conflicts
       setMembers(prev=>[
@@ -841,14 +898,19 @@ const MembersScreen = ({members,setMembers,plans,setPlans,settings,addAudit,curr
   const handleRenew=(id,plan,renewal,paid,newExpiry)=>{
     setMembers(prev=>ops.applyRenewal(prev,id,plan,renewal,paid,newExpiry));
     const m=members.find(x=>x.id===id);
-    addAudit(currentUser,`Renewed: ${m?.name} → ${plan.name} till ${fmtDate(newExpiry)}`);
+    addAudit(currentUser,`Renewed: ${m?.name} → ${plan.name} till ${fmtDate(newExpiry)}${paid?"":" (fee pending)"}`);
   };
 
-  // [FIX-1]: Mark Paid = flag only, no renewal entry
-  const markPaid=id=>{
-    const m=members.find(x=>x.id===id);
-    setMembers(prev=>ops.markPaid(prev,id));
-    addAudit(currentUser,`Fee paid: ${m?.name}`);
+  // Mark a specific session paid/pending — revenue updates by exactly that session's amount
+  const markSessionPaid=(memberId,sessionIdx)=>{
+    const m=members.find(x=>x.id===memberId);
+    setMembers(prev=>ops.markSessionPaid(prev,memberId,sessionIdx));
+    addAudit(currentUser,`Fee paid: ${m?.name} — session #${sessionIdx+1}`);
+  };
+  const markSessionPending=(memberId,sessionIdx)=>{
+    const m=members.find(x=>x.id===memberId);
+    setMembers(prev=>ops.markSessionPending(prev,memberId,sessionIdx));
+    addAudit(currentUser,`Fee unmarked: ${m?.name} — session #${sessionIdx+1}`);
   };
 
   const doDeactivate=id=>{
@@ -895,6 +957,7 @@ const MembersScreen = ({members,setMembers,plans,setPlans,settings,addAudit,curr
         {filtered.length===0&&<div style={{textAlign:"center",padding:32,color:C.sub,fontSize:14}}>Koi member nahi mila.</div>}
         {filtered.map(m=>{
           const status=getMemberStatus(m),plan=plans.find(p=>p.id===m.planId),rev=memberRevenue(m);
+          const pendC=pendingCount(m), pendAmt=pendingAmount(m);
           return (
             <Card key={m.id} style={{padding:14}}>
               <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
@@ -914,13 +977,15 @@ const MembersScreen = ({members,setMembers,plans,setPlans,settings,addAudit,curr
               <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
                 {m.seatNo!=null?<Badge text={`🪑 Seat ${m.seatNo}`} color="#0D9488" bg={C.tealMid}/>:null}
                 <StatusBadge status={status}/>
-                <Badge text={m.paid?"✓ Paid":"Fee Pending"} color={m.paid?"#16A34A":"#DC2626"} bg={m.paid?C.greenLight:C.redLight}/>
+                {pendC>0
+                  ?<Badge text={`${pendC} Pending — ₹${pendAmt}`} color="#DC2626" bg={C.redLight}/>
+                  :<Badge text="✓ Paid Up" color="#16A34A" bg={C.greenLight}/>}
               </div>
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                 <Btn onClick={()=>setViewing(m)} variant="ghost" size="sm" iconName="timeline">Profile</Btn>
                 <Btn onClick={()=>setIdCardFor(m)} variant="indigo" size="sm" iconName="idcard">ID Card</Btn>
                 {(status==="expired"||status==="expiring"||status==="inactive")?<Btn onClick={()=>setRenewFor(m)} variant="purple" size="sm" iconName="refresh">Renew</Btn>:null}
-                {!m.paid?<Btn onClick={()=>markPaid(m.id)} variant="green" size="sm" iconName="check">Paid</Btn>:null}
+                {pendC>0?<Btn onClick={()=>setViewing(m)} variant="green" size="sm" iconName="check">Mark Paid</Btn>:null}
                 <Btn onClick={()=>openEdit(m)} variant="ghost" size="sm" iconName="edit">Edit</Btn>
                 <Btn onClick={()=>setDeactivateGuard(m)} variant="ghost" size="sm">{m.manualInactive?"Activate":"Deactivate"}</Btn>
                 <Btn onClick={()=>setDeleteGuard(m)} variant="danger" size="sm" iconName="trash"/>
@@ -954,13 +1019,20 @@ const MembersScreen = ({members,setMembers,plans,setPlans,settings,addAudit,curr
             <div style={{fontSize:13,color:"#0D9488",fontWeight:700}}>{selPlan.name} · {selPlan.days} days</div>
             <div style={{fontSize:20,fontWeight:900,color:"#0D9488",fontFamily:"monospace"}}>₹{selPlan.price}</div>
           </div>}
-          <label style={{display:"flex",alignItems:"center",gap:10,background:form.paid?C.greenLight:C.surfaceAlt,borderRadius:RADIUS.md,padding:"12px 14px",marginBottom:16,cursor:"pointer",border:`1px solid ${form.paid?"#16A34A":C.border}`,transition:TR}}>
-            <input type="checkbox" checked={form.paid} onChange={e=>setForm({...form,paid:e.target.checked})} style={{width:17,height:17,accentColor:"#16A34A"}}/>
-            <div>
-              <div style={{fontWeight:700,color:form.paid?"#16A34A":C.text,fontSize:14}}>Fee collect kar li ✓</div>
-              <div style={{fontSize:11,color:C.sub}}>Timeline mein ek renewal entry banegi</div>
-            </div>
-          </label>
+          {!editing&&(
+            <label style={{display:"flex",alignItems:"center",gap:10,background:form.paid?C.greenLight:C.amberLight,borderRadius:RADIUS.md,padding:"12px 14px",marginBottom:16,cursor:"pointer",border:`1px solid ${form.paid?"#16A34A":"#D97706"}`,transition:TR}}>
+              <input type="checkbox" checked={form.paid} onChange={e=>setForm({...form,paid:e.target.checked})} style={{width:17,height:17,accentColor:"#16A34A"}}/>
+              <div>
+                <div style={{fontWeight:700,color:form.paid?"#16A34A":"#D97706",fontSize:14}}>{form.paid?"Pehle session ka fee collect ho gaya ✓":"Pehle session ka fee abhi pending hai"}</div>
+                <div style={{fontSize:11,color:C.sub}}>{form.paid?"Revenue mein turant add hoga":"Baad mein Profile se Mark Paid kar sakte ho"}</div>
+              </div>
+            </label>
+          )}
+          {editing&&(
+            <Alert color="#2563EB" bg="#EFF6FF" iconName="info" style={{marginBottom:16}}>
+              Plan/payment status edit karne ke liye <b>Renew</b> ya member <b>Profile</b> se session-wise Mark Paid use karo. Yahan sirf basic info update hoti hai.
+            </Alert>
+          )}
           {formDirty&&<Alert color="#D97706" bg="#FEF3C7" iconName="warn" style={{marginBottom:12}}>Unsaved changes hain — Save zaroor karo.</Alert>}
           <Btn onClick={save} iconName="check" full>Save Member</Btn>
         </Modal>
@@ -975,7 +1047,9 @@ const MembersScreen = ({members,setMembers,plans,setPlans,settings,addAudit,curr
             <MemberTimeline member={fm} plans={plans}
               onRenew={()=>{setRenewFor(fm);setViewing(null);}}
               onReceipt={renewal=>setReceipt({member:fm,renewal})}
-              onIdCard={()=>{setIdCardFor(fm);setViewing(null);}}/>
+              onIdCard={()=>{setIdCardFor(fm);setViewing(null);}}
+              onMarkSessionPaid={(idx)=>markSessionPaid(fm.id,idx)}
+              onMarkSessionPending={(idx)=>markSessionPending(fm.id,idx)}/>
           );})()}
         </Modal>
       )}
@@ -992,90 +1066,103 @@ const MembersScreen = ({members,setMembers,plans,setPlans,settings,addAudit,curr
 
 const FeesScreen = ({members,setMembers,plans,settings,addAudit,currentUser}) => {
   const {dark}=useDark(); const C=makeC(dark);
-  const [filter,setFilter]=useState("all");
+  const [filter,setFilter]=useState("pending"); // default to pending so staff sees what's due
   const [receipt,setReceipt]=useState(null);
   const [renewFor,setRenewFor]=useState(null);
 
-  // [FIX-1,2,3]: Mark Paid = flag only. NO renewal entry. Revenue unchanged.
-  const markPaid=id=>{
-    const m=members.find(x=>x.id===id);
-    setMembers(prev=>ops.markPaid(prev,id));
-    addAudit(currentUser,`Fee marked paid: ${m?.name}`);
-    // Show last renewal as receipt if one exists (do not create a new one)
-    const lastRenewal=m?.renewals?.slice(-1)[0];
-    if(lastRenewal) setReceipt({member:m,renewal:lastRenewal});
+  // Mark a SPECIFIC session paid — revenue increases by exactly that session's amount
+  const markSessionPaid=(memberId,sessionIdx)=>{
+    const m=members.find(x=>x.id===memberId);
+    setMembers(prev=>ops.markSessionPaid(prev,memberId,sessionIdx));
+    addAudit(currentUser,`Fee marked paid: ${m?.name} — session #${sessionIdx+1}`);
+    const session=m?.renewals?.[sessionIdx];
+    if(session) setReceipt({member:m,renewal:{...session,status:"paid",paidOn:session.paidOn||todayStr(),paidTime:session.paidTime||timeNow()}});
   };
-
-  // Unmark = flag only
-  const markUnpaid=id=>setMembers(prev=>ops.markUnpaid(prev,id));
+  const markSessionPending=(memberId,sessionIdx)=>{
+    const m=members.find(x=>x.id===memberId);
+    setMembers(prev=>ops.markSessionPending(prev,memberId,sessionIdx));
+    addAudit(currentUser,`Fee unmarked: ${m?.name} — session #${sessionIdx+1}`);
+  };
 
   const handleRenew=(id,plan,renewal,paid,newExpiry)=>{
     const m=members.find(x=>x.id===id);
     setMembers(prev=>ops.applyRenewal(prev,id,plan,renewal,paid,newExpiry));
-    addAudit(currentUser,`Renewed: ${m?.name} → ${plan.name}`);
+    addAudit(currentUser,`Renewed: ${m?.name} → ${plan.name}${paid?"":" (fee pending)"}`);
   };
 
-  const allRev  =totalRevenue(members);
-  const pending =members.filter(m=>!m.paid).reduce((s,m)=>s+(plans.find(p=>p.id===m.planId)?.price||0),0);
-  const filtered=filter==="paid"?members.filter(m=>m.paid):filter==="unpaid"?members.filter(m=>!m.paid):members;
+  // Flatten every session across every member into one list, each tagged with its member
+  const allSessions = useMemo(() => {
+    const rows=[];
+    members.forEach(m=>{
+      (m.renewals||[]).forEach((r,idx)=>{
+        rows.push({ member:m, session:r, sessionIdx:idx, paid:sessionPaid(r) });
+      });
+    });
+    // Most recent first
+    return rows.sort((a,b)=> new Date(b.session.from) - new Date(a.session.from));
+  },[members]);
+
+  const allRev   = totalRevenue(members);
+  const pendingRows = allSessions.filter(r=>!r.paid);
+  const pendingTotal = pendingRows.reduce((s,r)=>s+(Number(r.session.amount)||0),0);
+
+  const filtered = filter==="paid" ? allSessions.filter(r=>r.paid)
+                  : filter==="pending" ? pendingRows
+                  : allSessions;
 
   return (
     <div>
       <div style={{marginBottom:16}}>
         <div style={{fontSize:22,fontWeight:900,color:C.text,letterSpacing:"-0.4px"}}>Fees</div>
-        <div style={{fontSize:13,color:C.sub,marginTop:2}}>Offline collection · history · receipt</div>
+        <div style={{fontSize:13,color:C.sub,marginTop:2}}>Har session ka alag paid/pending status — koi bhi mahina miss nahi hoga</div>
       </div>
 
-      {/* Revenue info box */}
       <Alert color="#4F46E5" bg="#EEF2FF" iconName="info" style={{marginBottom:14}}>
-        <b>Note:</b> Mark Paid / Unmark sirf current-cycle fee collection flag hai. Yeh revenue change nahi karta.
-        Revenue sirf <b>Renew</b> karne se badh ta hai. Isliye mark→unmark→mark se duplicate revenue nahi hoga.
+        Har renewal/session ka apna paid ya pending status hai. Revenue sirf paid sessions se aata hai — isliye agar koi member 2 mahine se fee nahi de raha, dono sessions alag-alag "Pending" dikhenge.
       </Alert>
 
       <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
-        <StatBox icon="check" label="All-time Revenue"  value={`₹${allRev.toLocaleString()}`}  sub={`${members.filter(m=>m.paid).length} paid`}  color="#16A34A"/>
-        <StatBox icon="bell"  label="Approx. Pending"   value={`₹${pending.toLocaleString()}`} sub={`${members.filter(m=>!m.paid).length} members`} color="#DC2626"/>
+        <StatBox icon="check" label="Total Revenue (Paid)" value={`₹${allRev.toLocaleString()}`} sub={`${allSessions.filter(r=>r.paid).length} sessions`} color="#16A34A"/>
+        <StatBox icon="bell"  label="Pending Amount"       value={`₹${pendingTotal.toLocaleString()}`} sub={`${pendingRows.length} sessions`} color="#DC2626"/>
       </div>
 
       <div style={{display:"flex",gap:8,marginBottom:14}}>
-        {[["all","All"],["paid","Paid"],["unpaid","Pending"]].map(([v,l])=>(
+        {[["pending",`Pending (${pendingRows.length})`],["paid","Paid"],["all","All"]].map(([v,l])=>(
           <button key={v} onClick={()=>setFilter(v)} style={sTabBtn(C,filter===v)}>{l}</button>
         ))}
       </div>
 
       <div style={{display:"flex",flexDirection:"column",gap:10}}>
-        {filtered.map(m=>{
-          const plan=plans.find(p=>p.id===m.planId);
-          const last=(m.renewals||[]).slice(-1)[0];
+        {filtered.length===0&&<div style={{textAlign:"center",padding:32,color:C.sub,fontSize:14}}>{filter==="pending"?"Koi pending fee nahi — sab paid hai! 🎉":"Koi record nahi mila."}</div>}
+        {filtered.map(({member:m,session:r,sessionIdx,paid})=>{
           const status=getMemberStatus(m);
-          const rev=memberRevenue(m);
           return (
-            <Card key={m.id} style={{padding:14}}>
+            <Card key={`${m.id}-${sessionIdx}`} style={{padding:14, borderLeft:`3px solid ${paid?"#16A34A":"#DC2626"}`}}>
               <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
                 <div style={sAvatar(40)}>{m.name[0]}</div>
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:800,color:C.text,fontSize:14}}>{m.name}</div>
                   <div style={{fontSize:12,color:C.sub}}>{m.phone} · {m.id}{m.seatNo!=null?` · Seat ${m.seatNo}`:""}</div>
-                  <div style={{fontSize:11,color:C.faint}}>{m.renewals?.length||0} sessions · ₹{rev.toLocaleString()} total revenue</div>
+                  <div style={{fontSize:11,color:C.faint}}>{r.planName} session · {fmtDateSh(r.from)} – {fmtDateSh(r.to)}</div>
                 </div>
                 <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:17,fontWeight:900,color:"#0D9488",fontFamily:"monospace"}}>₹{plan?.price??""}</div>
-                  <div style={{fontSize:10,color:C.faint}}>{plan?.name}</div>
+                  <div style={{fontSize:17,fontWeight:900,color:paid?"#16A34A":"#DC2626",fontFamily:"monospace"}}>₹{r.amount}</div>
+                  <div style={{fontSize:10,color:C.faint}}>{paid?"Paid":"Pending"}</div>
                 </div>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
                 <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-                  <Badge text={m.paid?"✓ Paid":"Pending"} color={m.paid?"#16A34A":"#DC2626"} bg={m.paid?C.greenLight:C.redLight}/>
+                  <Badge text={paid?"✓ Paid":"Pending"} color={paid?"#16A34A":"#DC2626"} bg={paid?C.greenLight:C.redLight}/>
                   <StatusBadge status={status}/>
-                  {last&&<span style={{fontSize:11,color:C.faint}}>Last renewal: {fmtDate(last.paidOn)}</span>}
+                  {paid&&<span style={{fontSize:11,color:C.faint}}>Paid: {fmtDate(r.paidOn)} {r.paidTime||""}</span>}
                 </div>
                 <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                  {!m.paid
-                    ?<Btn onClick={()=>markPaid(m.id)} variant="green" size="sm" iconName="check">Mark Paid</Btn>
-                    :<Btn onClick={()=>markUnpaid(m.id)} variant="ghost" size="sm">Unmark</Btn>
+                  {!paid
+                    ?<Btn onClick={()=>markSessionPaid(m.id,sessionIdx)} variant="green" size="sm" iconName="check">Mark Paid</Btn>
+                    :<Btn onClick={()=>markSessionPending(m.id,sessionIdx)} variant="ghost" size="sm">Unmark</Btn>
                   }
                   {(status==="expired"||status==="expiring")?<Btn onClick={()=>setRenewFor(m)} variant="purple" size="sm" iconName="refresh">Renew</Btn>:null}
-                  {last&&<Btn onClick={()=>setReceipt({member:m,renewal:last})} variant="ghost" size="sm" iconName="print"/>}
+                  {paid&&<Btn onClick={()=>setReceipt({member:m,renewal:r})} variant="ghost" size="sm" iconName="print"/>}
                 </div>
               </div>
             </Card>
@@ -1111,8 +1198,8 @@ const AdminPanel = ({settings,setSettings,plans,setPlans,members,setMembers,staf
   const [deletePlanGuard,setDeletePlanGuard]=useState(null);
 
   // Manual entry state
-  const blankManual=useMemo(()=>({name:"",phone:"",address:"",planId:plans[0]?.id||"",seatNo:"",firstJoined:"",expiry:"",paid:true,manualInactive:false}),[plans]);
-  const blankRenewal=useMemo(()=>({planId:plans[0]?.id||"",planName:"",amount:"",from:"",to:"",paidOn:"",paidTime:"09:00 AM",note:""}),[plans]);
+  const blankManual=useMemo(()=>({name:"",phone:"",address:"",planId:plans[0]?.id||"",seatNo:"",firstJoined:"",expiry:"",manualInactive:false}),[plans]);
+  const blankRenewal=useMemo(()=>({planId:plans[0]?.id||"",planName:"",amount:"",from:"",to:"",paidOn:"",paidTime:"09:00 AM",note:"",status:"paid"}),[plans]);
   const [manualForm,setManualForm]=useState(blankManual);
   const [renewals,setRenewals]=useState([]);
   const [addingRenewal,setAddingRenewal]=useState(false);
@@ -1191,18 +1278,21 @@ const AdminPanel = ({settings,setSettings,plans,setPlans,members,setMembers,staf
   const addRenewalRow=()=>{
     if(!renewalForm.from||!renewalForm.to||!renewalForm.amount) return;
     const plan=plans.find(p=>p.id===renewalForm.planId);
+    const isPaid = renewalForm.status!=="pending";
     setRenewals(prev=>[...prev,{
       planId:renewalForm.planId,planName:plan?.name||renewalForm.planName,
       amount:Number(renewalForm.amount),from:renewalForm.from,to:renewalForm.to,
-      paidOn:renewalForm.paidOn||renewalForm.from,paidTime:renewalForm.paidTime||"09:00 AM",
+      paidOn:isPaid?(renewalForm.paidOn||renewalForm.from):null,
+      paidTime:isPaid?(renewalForm.paidTime||"09:00 AM"):null,
       note:renewalForm.note||null,
+      status:isPaid?"paid":"pending",
     }]);
     setRenewalForm(blankRenewal);setAddingRenewal(false);
   };
 
-  // [FIX-2]: Manual entry — renewals come from the form explicitly.
-  // paid=true here means "current fee collected" flag only (does NOT add another renewal).
-  // The renewal history is entirely from the renewals[] array built in this form.
+  // Manual entry — renewals come from the form explicitly, each with its own
+  // paid/pending status. Revenue = sum of only the paid-status entries. The
+  // member's overall `paid` legacy flag is derived (true only if zero pending).
   const saveManualMember=()=>{
     setManualError("");
     if(!manualForm.name.trim()||!manualForm.phone.trim()){setManualError("Name aur Phone required hain.");return;}
@@ -1211,17 +1301,17 @@ const AdminPanel = ({settings,setSettings,plans,setPlans,members,setMembers,staf
     if(!manualForm.expiry){setManualError("Expiry Date required hai.");return;}
     if(manualForm.firstJoined>manualForm.expiry){setManualError("First Join Date, Expiry Date se pehle honi chahiye.");return;}
     const seatNum=normalizeSeat(manualForm.seatNo);
-    const newM={
+    const newM=recomputeLegacyPaidFlag({
       id:genId(members.map(m=>m.id)),
       name:manualForm.name.trim(),phone:manualForm.phone.trim(),
       address:manualForm.address||"",planId:manualForm.planId,seatNo:seatNum,
       firstJoined:manualForm.firstJoined,expiry:manualForm.expiry,
-      paid:manualForm.paid,
       manualInactive:manualForm.manualInactive,
       renewals,  // exactly what was entered — nothing added automatically
-    };
+    });
     setMembers(prev=>[...prev,newM]);
-    addAudit(currentUser,`Manual entry: ${newM.name} (${newM.id}) — ${renewals.length} renewal(s)`);
+    const pendN=pendingCount(newM);
+    addAudit(currentUser,`Manual entry: ${newM.name} (${newM.id}) — ${renewals.length} session(s), ${pendN} pending`);
     setManualForm(blankManual);setRenewals([]);setManualSaved(true);
     setTimeout(()=>setManualSaved(false),3000);
   };
@@ -1331,8 +1421,8 @@ const AdminPanel = ({settings,setSettings,plans,setPlans,members,setMembers,staf
       {tab==="manual"&&(
         <div>
           <Alert color="#4F46E5" bg="#EEF2FF" iconName="info" style={{marginBottom:16}}>
-            <b>Purane Members ka Manual Entry:</b> Poori renewal history ke saath add karo.
-            Yahan <b>paid=true</b> sirf current fee flag hai — revenue sirf renewal entries se aata hai.
+            <b>Purane Members ka Manual Entry:</b> Poori renewal/session history add karo. Har session ka apna
+            paid/pending status hoga — revenue sirf paid sessions se aayega.
           </Alert>
           <Card style={{padding:20}}>
             <Divider label="Member Basic Info"/>
@@ -1351,31 +1441,29 @@ const AdminPanel = ({settings,setSettings,plans,setPlans,members,setMembers,staf
             </div>
             <div style={{display:"flex",gap:12,marginBottom:16,flexWrap:"wrap"}}>
               <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:C.text,fontWeight:600}}>
-                <input type="checkbox" checked={manualForm.paid} onChange={e=>setManualForm({...manualForm,paid:e.target.checked})} style={{accentColor:"#16A34A"}}/>
-                Fee Paid hai abhi (flag only)
-              </label>
-              <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:C.text,fontWeight:600}}>
                 <input type="checkbox" checked={manualForm.manualInactive} onChange={e=>setManualForm({...manualForm,manualInactive:e.target.checked})} style={{accentColor:"#DC2626"}}/>
                 Inactive mark karo
               </label>
             </div>
 
-            <Divider label={`Renewal History — ${renewals.length} entries · ₹${renewals.reduce((s,r)=>s+Number(r.amount),0)} total`}/>
-            {renewals.length===0&&<div style={{fontSize:13,color:C.faint,marginBottom:12,fontStyle:"italic"}}>Koi renewal nahi add ki abhi tak. Revenue tab tak zero rahega.</div>}
-            {renewals.map((r,i)=>(
-              <div key={i} style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:RADIUS.md,padding:"10px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <Divider label={`Renewal History — ${renewals.length} sessions · ₹${renewals.filter(r=>r.status!=="pending").reduce((s,r)=>s+Number(r.amount),0)} paid · ${renewals.filter(r=>r.status==="pending").length} pending`}/>
+            {renewals.length===0&&<div style={{fontSize:13,color:C.faint,marginBottom:12,fontStyle:"italic"}}>Koi session nahi add ki abhi tak. Revenue tab tak zero rahega.</div>}
+            {renewals.map((r,i)=>{
+              const paid=r.status!=="pending";
+              return (
+              <div key={i} style={{background:paid?C.surfaceAlt:C.redLight,border:`1px solid ${paid?C.border:"#DC262633"}`,borderRadius:RADIUS.md,padding:"10px 14px",marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
-                  <div style={{fontWeight:700,color:C.text,fontSize:13}}>{r.planName} — ₹{r.amount}</div>
+                  <div style={{fontWeight:700,color:C.text,fontSize:13}}>{r.planName} — ₹{r.amount} <Badge text={paid?"Paid":"Pending"} color={paid?"#16A34A":"#DC2626"} bg={paid?C.greenLight:C.redLight} size={10}/></div>
                   <div style={{fontSize:11,color:C.sub}}>{fmtDate(r.from)} → {fmtDate(r.to)}</div>
                   {r.note&&<div style={{fontSize:11,color:"#D97706"}}>{r.note}</div>}
                 </div>
                 <Btn onClick={()=>setRenewals(prev=>prev.filter((_,j)=>j!==i))} variant="danger" size="sm" iconName="trash"/>
               </div>
-            ))}
+            );})}
 
             {addingRenewal?(
               <div style={{background:C.tealLight,border:`1px solid #0D948833`,borderRadius:RADIUS.lg,padding:16,marginBottom:12}}>
-                <div style={{fontWeight:700,color:"#0D9488",marginBottom:12,fontSize:13}}>New Renewal Entry</div>
+                <div style={{fontWeight:700,color:"#0D9488",marginBottom:12,fontSize:13}}>New Session Entry</div>
                 <Field label="Plan" value={renewalForm.planId} onChange={v=>{const p=plans.find(x=>x.id===v);setRenewalForm({...renewalForm,planId:v,planName:p?.name||"",amount:String(p?.price||"")});}}
                   options={plans.map(p=>({value:p.id,label:`${p.name} — ₹${p.price}`}))}/>
                 <Field label="Amount (₹)" value={renewalForm.amount} onChange={v=>setRenewalForm({...renewalForm,amount:v})} type="number" hint="Custom amount ho sakta hai"/>
@@ -1383,18 +1471,22 @@ const AdminPanel = ({settings,setSettings,plans,setPlans,members,setMembers,staf
                   <Field label="From Date" value={renewalForm.from} onChange={v=>setRenewalForm({...renewalForm,from:v})} type="date" required/>
                   <Field label="To Date"   value={renewalForm.to}   onChange={v=>setRenewalForm({...renewalForm,to:v})}   type="date" required/>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-                  <Field label="Paid On Date" value={renewalForm.paidOn}  onChange={v=>setRenewalForm({...renewalForm,paidOn:v})}  type="date"/>
-                  <Field label="Paid Time"    value={renewalForm.paidTime} onChange={v=>setRenewalForm({...renewalForm,paidTime:v})} placeholder="09:00 AM"/>
-                </div>
+                <Field label="Session Status" value={renewalForm.status} onChange={v=>setRenewalForm({...renewalForm,status:v})}
+                  options={[{value:"paid",label:"Paid — fee collected"},{value:"pending",label:"Pending — fee abhi nahi mila"}]}/>
+                {renewalForm.status!=="pending"&&(
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    <Field label="Paid On Date" value={renewalForm.paidOn}  onChange={v=>setRenewalForm({...renewalForm,paidOn:v})}  type="date"/>
+                    <Field label="Paid Time"    value={renewalForm.paidTime} onChange={v=>setRenewalForm({...renewalForm,paidTime:v})} placeholder="09:00 AM"/>
+                  </div>
+                )}
                 <Field label="Note (optional)" value={renewalForm.note} onChange={v=>setRenewalForm({...renewalForm,note:v})} placeholder="e.g. ₹50 discount diya"/>
                 <div style={{display:"flex",gap:8}}>
-                  <Btn onClick={addRenewalRow} variant="green" iconName="plus">Add Renewal</Btn>
+                  <Btn onClick={addRenewalRow} variant="green" iconName="plus">Add Session</Btn>
                   <Btn onClick={()=>{setAddingRenewal(false);setRenewalForm(blankRenewal);}} variant="ghost">Cancel</Btn>
                 </div>
               </div>
             ):(
-              <Btn onClick={()=>setAddingRenewal(true)} variant="ghost" iconName="plus" size="sm" full>+ Renewal History Add Karo</Btn>
+              <Btn onClick={()=>setAddingRenewal(true)} variant="ghost" iconName="plus" size="sm" full>+ Session/Renewal History Add Karo</Btn>
             )}
 
             {manualError&&<Alert color="#DC2626" bg="#FEE2E2" iconName="warn" style={{marginTop:14,marginBottom:0}}>{manualError}</Alert>}
